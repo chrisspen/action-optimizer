@@ -13,12 +13,11 @@ from pprint import pprint
 from decimal import Decimal
 from collections import defaultdict
 
-from dateutil.parser import parse
 import numpy as np
 from pyexcel_ods import get_data
-
 from weka.arff import ArffFile, Nom, Num, Str, Date, MISSING
 from weka.classifiers import EnsembleClassifier
+from dateutil.parser import parse
 
 
 class SkipRow(Exception):
@@ -69,7 +68,7 @@ def attempt_cast_str_to_numeric(value):
         return value
 
 
-class Optimizer(object):
+class Optimizer:
     
     def __init__(self, fn, **kwargs):
 
@@ -220,7 +219,7 @@ class Optimizer(object):
 
                     column_values[column_name].add(new_row[column_name])
                     field_to_day_count.setdefault(column_name, 0)
-                    field_to_day_count[column_name] += new_row[column_name] != '' and new_row[column_name] != None
+                    field_to_day_count[column_name] += new_row[column_name] != '' and new_row[column_name] is not None
 
                 new_row['date'] = old_row['date']
                 # date_to_row[old_row['date']] = new_row
