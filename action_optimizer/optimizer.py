@@ -14,10 +14,10 @@ from decimal import Decimal
 from collections import defaultdict
 
 import numpy as np
+from dateutil.parser import parse
 from pyexcel_ods import get_data
 from weka.arff import ArffFile, Nom, Num, Str, Date, MISSING
 from weka.classifiers import EnsembleClassifier
-from dateutil.parser import parse
 
 
 class SkipRow(Exception):
@@ -76,8 +76,12 @@ class Optimizer:
             fn = os.path.join(BASE_DIR, fn)
         assert os.path.isfile(fn), 'File %s does not exist.' % fn
         self.fn = fn
+
+        # Find the fully qualified absolute file path, minus the extension.
         self.fqfn_base = os.path.splitext(os.path.abspath(fn))[0]
-        self.fn_base = os.path.splitext(os.path.split(fn)[0])[0]
+
+        # Find the filename, minus any path or extension.
+        self.fn_base = os.path.splitext(os.path.split(fn)[-1])[0]
 
         self.__dict__.update(kwargs)
         self.score_field_name = self.__dict__.get('score_field_name') or DEFAULT_SCORE_FIELD_NAME
@@ -91,7 +95,6 @@ class Optimizer:
         self.relation = self.__dict__.get('relation', DEFAULT_RELATION) % self.fn_base
 
     def analyze(self, save=True):
-
         self.score_field_name = self.score_field_name or DEFAULT_SCORE_FIELD_NAME
 
         print('Retrieving data...')
@@ -488,7 +491,7 @@ class Optimizer:
             queries.append((name, description, new_query))
 
         if save:
-            print('Saving classifier...')
+            print('Saving classifier to %s...' % self.classifier_fn)
             classifier.save(self.classifier_fn)
             print('Classifier saved to %s.' % self.classifier_fn)
 
