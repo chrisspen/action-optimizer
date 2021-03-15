@@ -8,6 +8,7 @@ import copy
 import csv
 import random
 import math
+import logging
 from datetime import date, timedelta
 from pprint import pprint
 from decimal import Decimal
@@ -18,6 +19,15 @@ from dateutil.parser import parse
 from pyexcel_ods import get_data
 from weka.arff import ArffFile, Nom, Num, Str, Date, MISSING
 from weka.classifiers import EnsembleClassifier
+
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+handler = logging.StreamHandler()
+handler.setLevel(logging.DEBUG)
+formatter = logging.Formatter("%(asctime)s:%(levelname)s:%(message)s", "%Y-%m-%d %H:%M:%S")
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
 
 class SkipRow(Exception):
@@ -97,7 +107,7 @@ class Optimizer:
     def analyze(self, save=True):
         self.score_field_name = self.score_field_name or DEFAULT_SCORE_FIELD_NAME
 
-        print('Retrieving data...')
+        logger.info('Retrieving data...')
         sys.stdout.flush()
         data = get_data(self.fn)['data']
 
@@ -116,9 +126,12 @@ class Optimizer:
         column_nominals = self.column_nominals = {} # {name: set(nominals)}
         assert len(column_names) == len(column_types)
         for column_name, ct in zip(column_names, column_types):
-            assert ct in (DATE, NUMERIC) or (ct[0] == '{' and ct[-1] == '}'), 'Invalid type: %s' % ct
+            assert ct and (ct in (DATE, NUMERIC) or (ct[0] == '{' and ct[-1] == '}')), 'Column "%s" has invalid type "%s"' % (column_name, ct)
             if ct[0] == '{':
-                column_nominals[column_name] = set(ct[1:-1].split(','))
+                try:
+                    column_nominals[column_name] = set(ct[1:-1].split(','))
+                except IndexError:
+                    raise Exception('Error processing nominal value for column "%s": "%s"' % (column_name, ct))
 
         column_learnables = self.column_learnables = {}
         for _a, _b in zip(column_names, data[LEARN_ROW_INDEX]):
@@ -129,7 +142,7 @@ class Optimizer:
                 column_learnables[_a] = int(_b)
             except Exception as exc:
                 raise Exception('Error checking controllable for column %s: %s' % (_a, exc))
-        print('column_learnables:', column_learnables)
+        logger.info('column_learnables: %s', column_learnables)
 
         column_predictables = self.column_predictables = {}
         for _a, _b in zip(column_names, data[PREDICT_ROW_INDEX]):
@@ -140,7 +153,7 @@ class Optimizer:
                 column_predictables[_a] = int(_b)
             except Exception as exc:
                 raise Exception('Error checking predictable for column %s: %s' % (_a, exc))
-        print('column_predictables:', column_predictables)
+        logger.info('column_predictables: %s', column_predictables)
 
         column_changeables = self.column_changeables = {}
         for _a, _b in zip(column_names, data[CHANGE_ROW_INDEX]):
@@ -152,7 +165,7 @@ class Optimizer:
                 column_changeables[_a] = _b
             except Exception as exc:
                 raise Exception('Error checking changeable for column %s: %s' % (_a, exc))
-        print('column_changeables:', column_changeables)
+        logger.info('column_changeables: %s', column_changeables)
 
         # Load data rows and convert to ARFF format.
         row_errors = {} # {row_count: error}
@@ -173,7 +186,6 @@ class Optimizer:
             try:
                 if not row:
                     continue
-                #print('row:', row_count, row)
                 assert len(row) == len(column_names), "Row %i has length %i but there are %i column headers." % (row_count, len(row), len(column_names))
                 assert len(row) == len(column_types)
                 old_row = dict(zip(column_names, row))
@@ -190,7 +202,7 @@ class Optimizer:
                     if ct == DATE:
                         if row_count == 1 and not isinstance(row_value, date):
                             # Ignore invalid date on first row, since we purposefully leave this blank.
-                            print('Warning: Invalid date "%s" on row %s.' % (row_value, row_count), file=sys.stderr)
+                            logging.warning('Warning: Invalid date "%s" on row %s.', row_value, row_count)
                             raise SkipRow
                         if isinstance(row_value, str):
                             # If the cell data wasn't entered correctly, the date value might be stored as a string.
@@ -228,7 +240,7 @@ class Optimizer:
                 # date_to_row[old_row['date']] = new_row
                 assert isinstance(old_row['date'], date)
                 date_to_score[old_row['date']] = new_row[self.score_field_name]
-                print("new_row:'%s':value: %s" % (self.score_field_name, new_row[self.score_field_name].value))
+                logging.info("new_row:'%s':value: %s", self.score_field_name, new_row[self.score_field_name].value)
                 best_day = max(best_day, (new_row[self.score_field_name].value, new_row), key=lambda o: o[0])
                 best_date = max(best_date, (new_row[self.score_field_name].value, old_row['date']), key=lambda o: o[0])
                 last_full_day = max(last_full_day, (old_row['date'], new_row), key=lambda o: o[0])
@@ -257,10 +269,10 @@ class Optimizer:
             assert isinstance(next_date, date)
             if next_date in date_to_score:
                 next_score = date_to_score[next_date]
-                print('current_date:', current_date)
-                print('current_score.value:', current_score.value)
-                print('next_date:', next_date)
-                print('next_score.value:', next_score.value)
+                logger.info('current_date: %s', current_date)
+                logger.info('current_score.value: %s', current_score.value)
+                logger.info('next_date: %s', next_date)
+                logger.info('next_score.value: %s', next_score.value)
                 assert current_date < next_date
                 
                 # CS 2018.9.26 Disabled because I think this may be stalling, when it doesn't see an incremental improvement.
@@ -268,7 +280,7 @@ class Optimizer:
                 #
                 # The prediction target is the change in day to day score, with the intent being to maximize this increase.
                 # score_change = Num(next_score.value - current_score.value)
-                # print('score_change:', score_change)
+                # logger.info('score_change:', score_change)
                 # new_row[CLASS_ATTR_NAME] = score_change
 
                 # The prediction target is the next day's score, with the intent being to maximize this score.
@@ -279,7 +291,7 @@ class Optimizer:
                     if not _controllable and _column in new_row:
                         del new_row[_column]
 
-                print('new_row:', new_row)
+                logger.info('new_row: %s', new_row)
                 sys.stdout.flush()
                 modified_rows.append(new_row)
                 arff.append(new_row)
@@ -306,9 +318,8 @@ class Optimizer:
                             continue
                     x = np.array(_x).astype(np.float32)
                     y = np.array(_y).astype(np.float32)
-                    # print('x:', x)
                     pcc = np.corrcoef(x, y)[0, 1]
-                    print('Pearson correlation for %s: %s' % (target_attr, pcc))
+                    logger.info('Pearson correlation for %s: %s', target_attr, pcc)
                     samples = len(_x)
                     if math.isnan(pcc):
                         continue
@@ -319,22 +330,20 @@ class Optimizer:
             return
 
         # Cleanup training arff.
-        print('attributes:', sorted(arff.attributes))
+        logger.info('attributes: %s', sorted(arff.attributes))
         arff.alphabetize_attributes()
         assert len(arff), 'Empty arff!' # pylint: disable=len-as-condition
-        #print(last_full_day)
-        # sys.exit()
 
         # Report any processing errors on each row.
         if row_errors:
-            print('='*80)
-            print('Row Errors: %s' % len(row_errors))
+            logger.info('='*80)
+            logger.info('Row Errors: %s', len(row_errors))
             for row_count in sorted(row_errors):
-                print('Row %i:' % row_count)
-                print(row_errors[row_count])
-            print('='*80)
+                logger.info('Row %i:', row_count)
+                logger.info(row_errors[row_count])
+            logger.info('='*80)
         else:
-            print('No row errors.')
+            logger.info('No row errors.')
             
         # Ensure the base arff file has all nominals values, even if they weren't used.
         for name in column_nominals:
@@ -342,12 +351,12 @@ class Optimizer:
                 arff.attribute_data[name].update(column_nominals[name])
 
         training_fn = os.path.join(BASE_DIR, self.fqfn_base + '.arff')
-        print('training_fn:', training_fn)
+        logger.info('training_fn: %s', training_fn)
         
-        print('Writing arff...')
+        logger.info('Writing arff...')
         with open(training_fn, 'w') as fout:
             arff.write(fout)
-        print('Arff written!')
+        logger.info('Arff written!')
 
         # Train all Weka regressors on arff training file.
         if self.all_classifiers:
@@ -356,37 +365,38 @@ class Optimizer:
             classes = [
                 'weka.classifiers.lazy.IBk',
                 'weka.classifiers.lazy.KStar',
-                'weka.classifiers.functions.MultilayerPerceptron',
+                # 2021.3.14 Disabled. Takes forever, usually wrong, and started returning a correlation_coefficient of None.
+                # IBk takes ~20 seconds with a CE of 1.
+                # KStar takes ~2000 seconds with a CE of 1.
+                # MultilayerPerceptron takes ~5000 seconds.
+                # 'weka.classifiers.functions.MultilayerPerceptron',
             ]
         if self.no_train:
             assert os.path.isfile(self.classifier_fn), \
                 'If training is disabled, then a classifier file must exist to re-use, but %s does not exist.' % self.classifier_fn
-            print('Loading classifier from file %s...' % self.classifier_fn)
+            logger.info('Loading classifier from file %s...', self.classifier_fn)
             classifier = EnsembleClassifier.load(self.classifier_fn)
-            print('Classifier loaded.')
+            logger.info('Classifier loaded.')
         else:
             classifier = EnsembleClassifier(classes=classes)
             classifier.train(training_data=training_fn, verbose=self.all_classifiers)
-        #print('='*80)
-        #print('errors:')
-        #classifier.get_errors()
-        print('='*80)
-        print('best:')
+        logger.info('='*80)
+        logger.info('best:')
         classifier.get_training_best()
-        print('='*80)
-        print('coverage: %.02f%%' % (classifier.get_training_coverage()*100))
+        logger.info('='*80)
+        logger.info('coverage: %.02f%%', classifier.get_training_coverage()*100)
         if self.all_classifiers:
-            print('Aborting query with all classifiers.')
+            logger.info('Aborting query with all classifiers.')
             sys.exit(0)
 
         # Find day with best score.
-        print('='*80)
+        logger.info('='*80)
         best_day_score, best_day_data = best_day
-        print('best_day_score:', best_day_score)
-        print('best_day_data:')
+        logger.info('best_day_score: %s', best_day_score)
+        logger.info('best_day_data:')
         pprint(best_day_data, indent=4)
-        print('best date:', best_date)
-        print('last full day:', last_full_day)
+        logger.info('best date: %s', best_date)
+        logger.info('last full day: %s', last_full_day)
         last_full_day_date = last_full_day[0]
         if self.yes is None and abs((last_full_day_date - date.today()).days) > 1:
             if input('Last full day is %s, which is over 1 day ago. Continue? [yn]:' % last_full_day_date).lower()[0] != 'y':
@@ -394,13 +404,10 @@ class Optimizer:
 
         # Generate query sets for each variable metric. Base them on the best day, and incrementally change them from there, to avoid drastic changes
         # which may have harmful medical side-effects.
-        print('='*80)
-        print('ranges:')
+        logger.info('='*80)
+        logger.info('ranges:')
         for _name, _range in sorted(column_ranges.items(), key=lambda o: o[0]):
-            #print(_name, ', '.join('%s=%s' for _k, _v in sorted(_range.items())))
-            print(_name, _range)
-        # pprint(column_ranges, indent=4)
-        #_, best_data = best_day
+            logger.info(_name, _range)
         _, best_data = last_full_day
         queries = [] # [(name, description, data)]
         query_name_list = sorted(column_values)
@@ -414,12 +421,10 @@ class Optimizer:
             if name in column_predictables and not column_predictables[name]:
                 continue
                 
-            print('Query attribute name:', name)
+            logger.info('Query attribute name: %s', name)
             if isinstance(list(column_values[name])[0], Nom):
-                print('Nominal attribute.')
+                logger.info('Nominal attribute.')
                 # Calculate changes for a nominal column.
-                #for direction in column_values[name]:
-                #continue
                 for direction in column_nominals[name]:
                     query_value = direction = Nom(direction)
                     new_query = copy.deepcopy(best_data)
@@ -427,13 +432,13 @@ class Optimizer:
                     best_value = best_data.get(name, sorted(column_nominals[name])[0])
                     if best_value != query_value:
                         description = '%s: change from %s -> %s' % (name, best_value, query_value)
-                        print('\t%s' % description)
+                        logger.info('\t%s', description)
                         queries.append((name, description, new_query))
             else:
                 # Calculate changes for a numeric column.
-                print('Numeric attribute.')
+                logger.info('Numeric attribute.')
                 if not column_ranges.get(name):
-                    print('Has no column ranges. Skipping.')
+                    logger.info('Has no column ranges. Skipping.')
                     continue
                 _min, _max, _step = column_ranges[name]
                 assert _min < _max, 'Invalid min/max!'
@@ -441,7 +446,7 @@ class Optimizer:
                     # Check every possible value.
                     _value = _min
                     while _value <= _max:
-                        print('Checking query %s=%s.' % (name, _value))
+                        logger.info('Checking query %s=%s.', name, _value)
                         
                         new_query = copy.deepcopy(best_data)
                         
@@ -453,14 +458,14 @@ class Optimizer:
                         
                         # Skip the hold case.
                         if _value == best_data.get(name, _mean):
-                            print('Hold case. Skipping.')
+                            logger.info('Hold case. Skipping.')
                             continue
                         
                         new_query[name].value = _value
                         if best_data.get(name, _mean) != new_query[name]:
-                            print('\tallowable range min/max/step:', _min, _max, _step)
+                            logger.info('\tallowable range min/max/step: %s %s %s', _min, _max, _step)
                             description = '%s: change from %s -> %s' % (name, best_data.get(name, _mean), new_query[name].value)
-                            print('\t%s' % description)
+                            logger.info('\t%s', description)
                             assert _min <= new_query[name].value <= _max
                             queries.append((name, description, new_query))
                             
@@ -480,9 +485,9 @@ class Optimizer:
                         new_query[name].value = min(new_query[name].value, _max)
                         new_query[name].value = max(new_query[name].value, _min)
                         if best_data.get(name, _mean) != new_query[name]:
-                            print('\tallowable range min/max/step:', _min, _max, _step)
+                            logger.info('\tallowable range min/max/step: %s %s %s', _min, _max, _step)
                             description = '%s: change from %s -> %s' % (name, best_data.get(name, _mean), new_query[name])
-                            print('\t%s' % description)
+                            logger.info('\t%s', description)
                             queries.append((name, description, new_query))
             
             # Re-evaluate the current state.
@@ -491,19 +496,19 @@ class Optimizer:
             queries.append((name, description, new_query))
 
         if save:
-            print('Saving classifier to %s...' % self.classifier_fn)
+            logger.info('Saving classifier to %s...', self.classifier_fn)
             classifier.save(self.classifier_fn)
-            print('Classifier saved to %s.' % self.classifier_fn)
+            logger.info('Classifier saved to %s.', self.classifier_fn)
 
         # Score each query.
-        print('='*80)
+        logger.info('='*80)
         total = len(queries)
         i = 0
         final_recommendations = [] # [(predicted change, old score, new score, description, name)]
         final_scores = {} # {name: (best predicted change, description)}
         for name, description, query_data in queries:
             i += 1
-            print('Running query %i of %i...' % (i, total))
+            logger.info('Running query %i of %i...', i, total)
             new_arff = arff.copy(schema_only=True)
             new_arff.relation = 'optimizer-query'
             query_data[CLASS_ATTR_NAME] = MISSING
@@ -512,33 +517,29 @@ class Optimizer:
                 if not _controllable and _column in query_data:
                     del query_data[_column]
                 
-            print('query_data:', sorted(query_data))
+            logger.info('query_data: %s', sorted(query_data))
             new_arff.append(query_data)
-            print('$'*80)
-            print('predicting...')
+            logger.info('$'*80)
+            logger.info('predicting...')
             predictions = list(classifier.predict(new_arff, tolerance=TOLERANCE, verbose=1, cleanup=0))
-            print('\tdesc:', description)
-            print('\tpredictions:', predictions)
-            #score_change = predictions[0].predicted - Decimal(str(old_score.value))
+            logger.info('\tdesc: %s', description)
+            logger.info('\tpredictions: %s', predictions)
             score_change = predictions[0].predicted
-            #print('\told score: %.02f' % old_score.value)
-            #print('\tnew score: %.02f' % predictions[0].predicted)
-            print('\tscore change: %.02f' % score_change)
-            #final_recommendations.append((score_change, old_score.value, predictions[0].predicted, description, name))
+            logger.info('\tscore change: %.02f', score_change)
             final_recommendations.append((score_change, 0, 0, description, name))
             final_scores.setdefault(name, (-1e999999999999, None))
             final_scores[name] = max(final_scores[name], (score_change, description))
 
         # Show top predictors.
-        print('='*80)
-        print('best predictors:')
+        logger.info('='*80)
+        logger.info('best predictors:')
         best_names = classifier.get_best_predictors(tolerance=TOLERANCE, verbose=True)
-        print(best_names)
+        logger.info(best_names)
         seed_date = last_full_day[0]
 
         # Show final top recommendations by attribute.
-        print('='*80)
-        print('recommendations by attribute based on date: %s' % seed_date)
+        logger.info('='*80)
+        logger.info('recommendations by attribute based on date: %s', seed_date)
         final_recommendations.sort(key=lambda o: (o[4], o[0]))
         i = 0
         digits = len(str(len(final_recommendations)))
@@ -547,21 +548,21 @@ class Optimizer:
             best_score_change, best_description = final_scores[name]
             if description != best_description:
                 continue
-            print(('\t%0'+str(digits)+'i %s => %.06f') % (i, description, change))
+            logger.info(('\t%0'+str(digits)+'i %s => %.06f'), i, description, change) # pylint: disable=logging-not-lazy
 
         # Show final top recommendations by best change.
         final_recommendations.sort()
 
-        print('='*80)
-        print('Evening recommendations by change based on date: %s' % seed_date)
+        logger.info('='*80)
+        logger.info('Evening recommendations by change based on date: %s', seed_date)
         print_recommendation(final_recommendations, final_scores, typ=EV)
 
-        print('='*80)
-        print('Morning recommendations by change based on date: %s' % seed_date)
+        logger.info('='*80)
+        logger.info('Morning recommendations by change based on date: %s', seed_date)
         print_recommendation(final_recommendations, final_scores, typ=MN)
 
-        print('='*80)
-        print('Other recommendations by change based on date: %s' % seed_date)
+        logger.info('='*80)
+        logger.info('Other recommendations by change based on date: %s', seed_date)
         print_recommendation(final_recommendations, final_scores, typ=OTHERS)
 
         return final_recommendations, final_scores
@@ -582,7 +583,7 @@ def print_recommendation(recs, scores, typ=None):
         best_score_change, best_description = scores[name]
         if description != best_description:
             continue
-        print(('\t%0'+str(digits)+'i %s => %.06f') % (i, description, change))
+        logger.info(('\t%0'+str(digits)+'i %s => %.06f'), i, description, change) # pylint: disable=logging-not-lazy
 
 
 if __name__ == '__main__':
