@@ -15,11 +15,13 @@ from decimal import Decimal
 from collections import defaultdict
 
 import numpy as np
+import scipy.optimize
 from dateutil.parser import parse
 from pyexcel_ods import get_data
 from weka.arff import ArffFile, Nom, Num, Str, Date, MISSING
 from weka.classifiers import EnsembleClassifier
 
+from sklearn.metrics import r2_score
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -70,12 +72,67 @@ DEFAULT_SCORE_FIELD_NAME = 'score'
 DEFAULT_CLASSIFIER_FN = '/tmp/%s-last-classifier.pkl.gz'
 DEFAULT_RELATION = '%s-training'
 
+REPORTS_DIR = './reports'
 
 def attempt_cast_str_to_numeric(value):
     try:
         return float(value)
     except ValueError:
         return value
+
+def linear_func(x, m=1, b=0):
+    """
+    m = slope
+    b = y-intercept
+    """
+    y = m * x + b
+    return y
+
+def sigmoid_func(x, x0=0, k=1, a=1, c=0):
+    """
+    Generates an S-surve.
+
+    y = 1/(1 + np.exp(-x)) # low left to high right
+
+    x0 = horizontal offset
+    k = polarity?
+    a = magnitude?
+    c = vertical offset
+    """
+    if isinstance(x, (tuple, list)):
+        x = np.array(x)
+    y = a / (1 + np.exp(-k*(x-x0))) + c
+    return y
+
+def gaussian(x, mu, sig):
+    return np.exp(-np.power(x - mu, 2.) / (2 * np.power(sig, 2.)))
+    
+def guassian_func(x, a=1, b=0, c=1, d=0):
+    """
+    Generates a bell curve.
+
+    a = magnitude
+    b = mu/average/mean
+    c = sigma/variance
+    d = vertical offset
+    """
+    from scipy import exp
+    return a * exp(-(x - b) ** 2 / (2 * c ** 2)) + d
+
+def fit_linear(x, y):
+    popt, pcov = scipy.optimize.curve_fit(linear_func, x, y)
+    return linear_func(x, *popt)
+
+def fit_sigmoid(x, y):
+    p0 = [max(y), np.median(x), 1, min(y)]
+    popt, pcov = scipy.optimize.curve_fit(sigmoid_func, x, y, p0, method='dogbox')
+    return sigmoid_func(x, *popt)
+
+def fit_guassian(x, y):
+    mean = sum(x * y) / sum(y)
+    sigma = np.sqrt(sum(y * (x - mean) ** 2) / sum(y))
+    popt, pcov = scipy.optimize.curve_fit(guassian_func, x, y, p0=[max(y), mean, sigma, 0])
+    return guassian_func(x, *popt)
 
 
 class Optimizer:
@@ -100,12 +157,96 @@ class Optimizer:
         self.no_train = self.__dict__.get('no_train') or False
         self.all_classifiers = self.__dict__.get('all_classifiers') or False
         self.calculate_pcc = self.__dict__.get('calculate_pcc') or False
+        self.plot_attributes = [_.strip() for _ in (self.__dict__.get('plot_attributes') or '').strip().split(',') if _.strip()]
         self.yes = self.__dict__.get('yes', None)
         self.classifier_fn = self.__dict__.get('classifier_fn', DEFAULT_CLASSIFIER_FN) % self.fn_base
         self.relation = self.__dict__.get('relation', DEFAULT_RELATION) % self.fn_base
 
+    def plot(self, x, y, name, show=False):
+        import matplotlib.pyplot as plt
+        from scipy.stats import norm, binned_statistic
+
+        plt.clf()
+
+        # Generate pure sigmoid curve.
+        plt.scatter(x, y, label='Raw', color='red', marker='.')
+
+        # Estimate the original curve from the noise.
+        linear_estimate = fit_linear(x, y)
+        guassian_estimate = guassian_func(x, y)
+        sigmoid_estimate = sigmoid_func(x, y)
+
+        linear_cod = guassian_cod = sigmoid_cod = None
+        linear_error = guassian_error = sigmoid_error = None
+
+        try:
+            linear_cod = r2_score(y, linear_estimate)
+            linear_error = abs(1 - linear_cod)
+            print('linear_cod:', linear_cod)
+        except (TypeError, ValueError):
+            pass
+
+        try:
+            guassian_cod = r2_score(y, guassian_estimate)
+            guassian_error = abs(1 - guassian_cod)
+            print('guassian_cod:', guassian_cod)
+        except (TypeError, ValueError):
+            pass
+
+        try:
+            sigmoid_cod = r2_score(y, sigmoid_estimate)
+            sigmoid_error = abs(1 - sigmoid_error)
+            print('sigmoid_cod:', sigmoid_cod)
+        except (TypeError, ValueError):
+            pass
+
+        binned_result = binned_statistic(x, y, statistic='median', bins=10)
+        binned_x = []
+        binned_y = binned_result.statistic
+        best_bin = (None, None) # (median, bin center)
+        for i in range(len(binned_result.bin_edges)-1):
+            _x = (binned_result.bin_edges[i] + binned_result.bin_edges[i+1])/2.
+            _y = binned_y[i]
+            binned_x.append(_x)
+            _best_value, _best_i = best_bin
+            if _best_value is None:
+                best_bin = _y, _x
+            else:
+                best_bin = max(best_bin, (_y, _x))
+        best_binned_media, best_binned_center = best_bin
+        print('best_bin:', best_bin)
+
+        plt.scatter(x, linear_estimate, label='Linear', marker='.')
+        plt.scatter(x, guassian_estimate, label='Guassian', marker='.')
+        plt.scatter(x, sigmoid_estimate, label='Sigmoid', marker='.')
+
+        plt.plot(binned_x, binned_y, label='Binned Median')
+
+        plt.title(name)
+        plt.legend()
+        plt.savefig('./reports/%s.png' % name)
+        if show:
+            plt.show()
+
+        return linear_error, guassian_error, sigmoid_error, best_binned_media, best_binned_center
+
     def analyze(self, save=True):
         self.score_field_name = self.score_field_name or DEFAULT_SCORE_FIELD_NAME
+
+        def isolate_attr(rows, attr):
+            _x = []
+            _y = []
+            for row in rows:
+                try:
+                    xv = float(row[attr].value)
+                    yv = float(row[CLASS_ATTR_NAME].value)
+                    _x.append(xv)
+                    _y.append(yv)
+                except (KeyError, AttributeError):
+                    continue
+            x = np.array(_x).astype(np.float32)
+            y = np.array(_y).astype(np.float32)
+            return x, y
 
         logger.info('Retrieving data...')
         sys.stdout.flush()
@@ -296,34 +437,52 @@ class Optimizer:
                 modified_rows.append(new_row)
                 arff.append(new_row)
 
+        if self.plot_attributes:
+            for attr_name in self.plot_attributes:
+                assert attr_name in column_types_dict, 'Unknown attribute: %s' % attr_name
+                assert column_types_dict[attr_name] == NUMERIC, 'Attribute %s is not numeric.' % attr_name
+                x, y = isolate_attr(modified_rows, attr_name)
+                self.plot(x, y, attr_name, show=True)
+            return
+
         if self.calculate_pcc:
             # https://en.wikipedia.org/wiki/Pearson_correlation_coefficient
             pcc_rows = []
-            with open('pcc.csv', 'w') as fout:
-                fieldnames = ['name', 'samples', 'pcc', 'utility']
+            with open(os.path.join(REPORTS_DIR, 'pcc-%s.csv' % date.today()), 'w') as fout:
+                fieldnames = [
+                    'name', 'samples', 'pcc', 'utility',
+                    'linear_error',
+                    'sigmoid_error',
+                    'guassian_error',
+                    'max_binned_median',
+                    'max_binned_center',
+                ]
                 writer = csv.DictWriter(fout, fieldnames=fieldnames)
                 writer.writerow(dict(zip(fieldnames, fieldnames)))
                 for target_attr in column_names:
                     if column_types_dict[target_attr] != NUMERIC or not column_predictables.get(target_attr) or target_attr == CLASS_ATTR_NAME:
                         continue
-                    _x = []
-                    _y = []
-                    for new_row in modified_rows:
-                        try:
-                            xv = float(new_row[CLASS_ATTR_NAME].value)
-                            yv = float(new_row[target_attr].value)
-                            _x.append(xv)
-                            _y.append(yv)
-                        except (KeyError, AttributeError):
-                            continue
-                    x = np.array(_x).astype(np.float32)
-                    y = np.array(_y).astype(np.float32)
-                    pcc = np.corrcoef(x, y)[0, 1]
+                    x, y = isolate_attr(modified_rows, target_attr)
+
+                    pcc = np.corrcoef(y, x)[0, 1]
                     logger.info('Pearson correlation for %s: %s', target_attr, pcc)
-                    samples = len(_x)
+                    samples = len(x)
                     if math.isnan(pcc):
                         continue
-                    pcc_rows.append(dict(name=target_attr, pcc=pcc, samples=samples, utility=samples*pcc))
+
+                    linear_error, guassian_error, sigmoid_error, max_binned_median, max_binned_center = self.plot(x, y, target_attr, show=False)
+
+                    pcc_rows.append(dict(
+                        name=target_attr,
+                        pcc=pcc,
+                        samples=samples,
+                        utility=samples*pcc,
+                        linear_error=linear_error,
+                        sigmoid_error=guassian_error,
+                        guassian_error=sigmoid_error,
+                        max_binned_median=max_binned_median,
+                        max_binned_center=max_binned_center,
+                    ))
                 pcc_rows.sort(key=lambda o: o['utility'])
                 for pcc_row in pcc_rows:
                     writer.writerow(pcc_row)
@@ -538,8 +697,8 @@ class Optimizer:
         seed_date = last_full_day[0]
 
         # Show final top recommendations by attribute.
-        logger.info('='*80)
-        logger.info('recommendations by attribute based on date: %s', seed_date)
+        print('='*80)
+        print('recommendations by attribute based on date: %s' % seed_date)
         final_recommendations.sort(key=lambda o: (o[4], o[0]))
         i = 0
         digits = len(str(len(final_recommendations)))
@@ -548,21 +707,21 @@ class Optimizer:
             best_score_change, best_description = final_scores[name]
             if description != best_description:
                 continue
-            logger.info(('\t%0'+str(digits)+'i %s => %.06f'), i, description, change) # pylint: disable=logging-not-lazy
+            print(('\t%0'+str(digits)+'i %s => %.06f') % (i, description, change))
 
         # Show final top recommendations by best change.
         final_recommendations.sort()
 
-        logger.info('='*80)
-        logger.info('Evening recommendations by change based on date: %s', seed_date)
+        print('='*80)
+        print('Evening recommendations by change based on date: %s' % seed_date)
         print_recommendation(final_recommendations, final_scores, typ=EV)
 
-        logger.info('='*80)
-        logger.info('Morning recommendations by change based on date: %s', seed_date)
+        print('='*80)
+        print('Morning recommendations by change based on date: %s' % seed_date)
         print_recommendation(final_recommendations, final_scores, typ=MN)
 
-        logger.info('='*80)
-        logger.info('Other recommendations by change based on date: %s', seed_date)
+        print('='*80)
+        print('Other recommendations by change based on date: %s' % seed_date)
         print_recommendation(final_recommendations, final_scores, typ=OTHERS)
 
         return final_recommendations, final_scores
@@ -583,7 +742,7 @@ def print_recommendation(recs, scores, typ=None):
         best_score_change, best_description = scores[name]
         if description != best_description:
             continue
-        logger.info(('\t%0'+str(digits)+'i %s => %.06f'), i, description, change) # pylint: disable=logging-not-lazy
+        print(('\t%0'+str(digits)+'i %s => %.06f') % (i, description, change))
 
 
 if __name__ == '__main__':
@@ -599,6 +758,8 @@ if __name__ == '__main__':
         help='If given, trains all classifiers, even the crappy ones. Otherwise, only uses the known best.')
     parser.add_argument('--calculate-pcc', action='store_true', default=False,
         help='If given, calculates the Pearson correlation coefficient for all attributes.')
+    parser.add_argument('--plot-attributes', default='',
+        help='Comma-delimited list of columns names to plot, where x-axis is the column value and y-axis is the score value mean.')
     parser.add_argument('--yes', default=None, action='store_true',
         help='Enables non-interactive mode and assumes yes for any interactive yes/no prompts.')
     args = parser.parse_args()

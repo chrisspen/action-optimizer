@@ -45,5 +45,110 @@ class Tests(unittest.TestCase):
         self.assertTrue(final_scores['supp_alpha'][0] > final_scores['sleep_hours'][0])
         self.assertTrue(final_scores['supp_alpha'][0] > final_scores['bed'][0])
 
+    def test_curvefit_linear(self):
+        import numpy as np
+        import matplotlib.pyplot as plt
+        from scipy.stats import norm
+        from sklearn.metrics import r2_score
+
+        from optimizer import fit_linear, linear_func, sigmoid_func, guassian_func
+
+        # Generate pure sigmoid curve.
+        x = np.linspace(-10, 10, 100)
+        pure = linear_func(x)
+        plt.plot(x, pure, label='Pure')
+
+        # Add noise to guassian curve.
+        signal = pure + np.random.normal(scale=1, size=len(x))
+        plt.scatter(x, signal, label='Pure + Noise', color='red', marker='.')
+
+        # Estimate the original curve from the noise.
+        estimate = fit_linear(x, signal)
+        plt.plot(x, estimate, linewidth=2, label='Fit')
+
+        # Calculate error.
+        cod = r2_score(pure, estimate)
+        print('cod:', cod)
+        self.assertEqual(round(cod), 1.0)
+
+        # Confirm no other curves fit as well.
+        for _func in [sigmoid_func, guassian_func]:
+            other_cod = r2_score(pure, _func(x, signal))
+            print('other_cod:', _func, other_cod)
+            self.assertEqual(round(other_cod), 0.0)
+
+        plt.legend()
+        plt.show()
+
+    def test_curvefit_sigmoid(self):
+        import numpy as np
+        import matplotlib.pyplot as plt
+        from scipy.stats import norm
+        from sklearn.metrics import r2_score
+
+        from optimizer import fit_sigmoid, linear_func, sigmoid_func, guassian_func
+
+        # Generate pure sigmoid curve.
+        x = np.linspace(-10, 10, 100)
+        pure = sigmoid_func(x)
+        plt.plot(x, pure, label='Pure')
+
+        # Add noise to guassian curve.
+        signal = pure + np.random.normal(scale=0.05, size=len(x))
+        plt.scatter(x, signal, label='Pure + Noise', color='red', marker='.')
+
+        # Estimate the original curve from the noise.
+        estimate = fit_sigmoid(x, signal)
+        plt.plot(x, estimate, linewidth=2, label='Fit')
+
+        # Calculate error.
+        cod = r2_score(pure, estimate)
+        print('cod:', cod)
+        self.assertEqual(round(cod), 1.0)
+
+        # Confirm no other curves fit as well.
+        for _func in [linear_func, guassian_func]:
+            other_cod = r2_score(pure, _func(x, signal))
+            print('other_cod:', _func, other_cod)
+            self.assertNotEqual(round(other_cod), 1.0)
+
+        # plt.legend()
+        # plt.show()
+
+    def test_curvefit_guassian(self):
+        import numpy as np
+        import matplotlib.pyplot as plt
+        from scipy.stats import norm
+        from sklearn.metrics import r2_score
+
+        from optimizer import fit_guassian, linear_func, sigmoid_func, guassian_func
+
+        # Generate pure guassian curve.
+        x = np.linspace(-10, 10, 100)
+        pure = guassian_func(x)
+        plt.plot(x, pure, label='Pure')
+
+        # Add noise to guassian curve.
+        signal = pure + np.random.normal(scale=0.05, size=len(x))
+        plt.scatter(x, signal, label='Pure + Noise', color='red', marker='.')
+
+        # Estimate the original curve from the noise.
+        estimate = fit_guassian(x, signal)
+        plt.plot(x, estimate, linewidth=2, label='Fit')
+
+        # Calculate error.
+        cod = r2_score(pure, estimate)
+        print('cod:', cod)
+        self.assertEqual(round(cod), 1.0)
+
+        # Confirm no other curves fit as well.
+        for _func in [linear_func, sigmoid_func]:
+            other_cod = r2_score(pure, _func(x, signal))
+            print('other_cod:', _func, other_cod)
+            self.assertNotEqual(round(other_cod), 1.0)
+
+        # plt.legend()
+        # plt.show()
+
 if __name__ == '__main__':
     unittest.main()

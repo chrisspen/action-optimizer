@@ -2,3 +2,7 @@ pyexcel-ods==0.5.2
 python-dateutil==2.7.3
 weka==1.0.6
 numpy==1.15.1
+scipy
+numpy
+matplotlib
+sklearn
