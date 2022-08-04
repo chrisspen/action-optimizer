@@ -521,14 +521,16 @@ class Optimizer:
         if self.all_classifiers:
             classes = None
         else:
+            # See http://bio.med.ucm.es/docs/weka/weka/classifiers/Classifier.html for a complete list.
             classes = [
+                # IBk takes ~20 seconds with a CE of 1.
                 'weka.classifiers.lazy.IBk',
+                # KStar takes ~2000 seconds with a CE of 1.
                 'weka.classifiers.lazy.KStar',
                 # 2021.3.14 Disabled. Takes forever, usually wrong, and started returning a correlation_coefficient of None.
-                # IBk takes ~20 seconds with a CE of 1.
-                # KStar takes ~2000 seconds with a CE of 1.
                 # MultilayerPerceptron takes ~5000 seconds.
                 # 'weka.classifiers.functions.MultilayerPerceptron',
+                'weka.classifiers.functions.LinearRegression',
             ]
         if self.no_train:
             assert os.path.isfile(self.classifier_fn), \
@@ -683,8 +685,12 @@ class Optimizer:
             predictions = list(classifier.predict(new_arff, tolerance=TOLERANCE, verbose=1, cleanup=0))
             logger.info('\tdesc: %s', description)
             logger.info('\tpredictions: %s', predictions)
-            score_change = predictions[0].predicted
-            logger.info('\tscore change: %.02f', score_change)
+            if predictions:
+                score_change = predictions[0].predicted
+                logger.info('\tscore change: %.02f', score_change)
+            else:
+                logger.warning('No predictions found? Possible bug in data or predictor?')
+                score_change = 0
             final_recommendations.append((score_change, 0, 0, description, name))
             final_scores.setdefault(name, (-1e999999999999, None))
             final_scores[name] = max(final_scores[name], (score_change, description))
