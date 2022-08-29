@@ -15,7 +15,10 @@ from decimal import Decimal
 from collections import defaultdict
 
 import numpy as np
+import matplotlib.pyplot as plt
 import scipy.optimize
+from scipy import exp
+from scipy.stats import norm, binned_statistic
 from dateutil.parser import parse
 from pyexcel_ods import get_data
 from weka.arff import ArffFile, Nom, Num, Str, Date, MISSING
@@ -74,11 +77,13 @@ DEFAULT_RELATION = '%s-training'
 
 REPORTS_DIR = './reports'
 
+
 def attempt_cast_str_to_numeric(value):
     try:
         return float(value)
     except ValueError:
         return value
+
 
 def linear_func(x, m=1, b=0):
     """
@@ -87,6 +92,7 @@ def linear_func(x, m=1, b=0):
     """
     y = m * x + b
     return y
+
 
 def sigmoid_func(x, x0=0, k=1, a=1, c=0):
     """
@@ -101,12 +107,14 @@ def sigmoid_func(x, x0=0, k=1, a=1, c=0):
     """
     if isinstance(x, (tuple, list)):
         x = np.array(x)
-    y = a / (1 + np.exp(-k*(x-x0))) + c
+    y = a / (1 + np.exp(-k * (x - x0))) + c
     return y
+
 
 def gaussian(x, mu, sig):
     return np.exp(-np.power(x - mu, 2.) / (2 * np.power(sig, 2.)))
-    
+
+
 def guassian_func(x, a=1, b=0, c=1, d=0):
     """
     Generates a bell curve.
@@ -116,32 +124,34 @@ def guassian_func(x, a=1, b=0, c=1, d=0):
     c = sigma/variance
     d = vertical offset
     """
-    from scipy import exp
-    return a * exp(-(x - b) ** 2 / (2 * c ** 2)) + d
+    return a * exp(-(x - b)**2 / (2 * c**2)) + d
+
 
 def fit_linear(x, y):
     popt, pcov = scipy.optimize.curve_fit(linear_func, x, y)
     return linear_func(x, *popt)
+
 
 def fit_sigmoid(x, y):
     p0 = [max(y), np.median(x), 1, min(y)]
     popt, pcov = scipy.optimize.curve_fit(sigmoid_func, x, y, p0, method='dogbox')
     return sigmoid_func(x, *popt)
 
+
 def fit_guassian(x, y):
     mean = sum(x * y) / sum(y)
-    sigma = np.sqrt(sum(y * (x - mean) ** 2) / sum(y))
+    sigma = np.sqrt(sum(y * (x - mean)**2) / sum(y))
     popt, pcov = scipy.optimize.curve_fit(guassian_func, x, y, p0=[max(y), mean, sigma, 0])
     return guassian_func(x, *popt)
 
 
 class Optimizer:
-    
+
     def __init__(self, fn, **kwargs):
 
         if not fn.startswith('/'):
             fn = os.path.join(BASE_DIR, fn)
-        assert os.path.isfile(fn), 'File %s does not exist.' % fn
+        assert os.path.isfile(fn), f'File {fn} does not exist.'
         self.fn = fn
 
         # Find the fully qualified absolute file path, minus the extension.
@@ -163,8 +173,6 @@ class Optimizer:
         self.relation = self.__dict__.get('relation', DEFAULT_RELATION) % self.fn_base
 
     def plot(self, x, y, name, show=False):
-        import matplotlib.pyplot as plt
-        from scipy.stats import norm, binned_statistic
 
         plt.clf()
 
@@ -204,8 +212,8 @@ class Optimizer:
         binned_x = []
         binned_y = binned_result.statistic
         best_bin = (None, None) # (median, bin center)
-        for i in range(len(binned_result.bin_edges)-1):
-            _x = (binned_result.bin_edges[i] + binned_result.bin_edges[i+1])/2.
+        for i in range(len(binned_result.bin_edges) - 1):
+            _x = (binned_result.bin_edges[i] + binned_result.bin_edges[i + 1]) / 2.
             _y = binned_y[i]
             binned_x.append(_x)
             _best_value, _best_i = best_bin
@@ -224,7 +232,7 @@ class Optimizer:
 
         plt.title(name)
         plt.legend()
-        plt.savefig('./reports/%s.png' % name)
+        plt.savefig(f'./reports/{name}.png')
         if show:
             plt.show()
 
@@ -258,7 +266,7 @@ class Optimizer:
         column_types = data[TYPE_ROW_INDEX]
         column_types_dict = dict(zip(column_names, column_types))
         column_ranges = dict(zip(column_names, data[RANGE_ROW_INDEX])) # min,max,step
-        for _name in column_ranges.keys():
+        for _name in column_ranges:
             if _name not in ('date') and column_ranges[_name]:
                 column_ranges[_name] = list(map(float, column_ranges[_name].split(',')))
             else:
@@ -267,12 +275,12 @@ class Optimizer:
         column_nominals = self.column_nominals = {} # {name: set(nominals)}
         assert len(column_names) == len(column_types)
         for column_name, ct in zip(column_names, column_types):
-            assert ct and (ct in (DATE, NUMERIC) or (ct[0] == '{' and ct[-1] == '}')), 'Column "%s" has invalid type "%s"' % (column_name, ct)
+            assert ct and (ct in (DATE, NUMERIC) or (ct[0] == '{' and ct[-1] == '}')), f'Column "{column_name}" has invalid type "{ct}"'
             if ct[0] == '{':
                 try:
                     column_nominals[column_name] = set(ct[1:-1].split(','))
-                except IndexError:
-                    raise Exception('Error processing nominal value for column "%s": "%s"' % (column_name, ct))
+                except IndexError as exc:
+                    raise Exception(f'Error processing nominal value for column "{column_name}": "{ct}"') from exc
 
         column_learnables = self.column_learnables = {}
         for _a, _b in zip(column_names, data[LEARN_ROW_INDEX]):
@@ -282,7 +290,7 @@ class Optimizer:
             try:
                 column_learnables[_a] = int(_b)
             except Exception as exc:
-                raise Exception('Error checking controllable for column %s: %s' % (_a, exc))
+                raise Exception(f'Error checking controllable for column {_a}: {exc}') from exc
         logger.info('column_learnables: %s', column_learnables)
 
         column_predictables = self.column_predictables = {}
@@ -293,7 +301,7 @@ class Optimizer:
             try:
                 column_predictables[_a] = int(_b)
             except Exception as exc:
-                raise Exception('Error checking predictable for column %s: %s' % (_a, exc))
+                raise Exception(f'Error checking predictable for column {_a}: {exc}') from exc
         logger.info('column_predictables: %s', column_predictables)
 
         column_changeables = self.column_changeables = {}
@@ -302,10 +310,10 @@ class Optimizer:
                 column_changeables[_a] = NA_CHANGE
                 continue
             try:
-                assert _b in CHANGE_TYPES, 'Invalid change type for column %s: %s' % (_a, _b)
+                assert _b in CHANGE_TYPES, f'Invalid change type for column {_a}: {_b}'
                 column_changeables[_a] = _b
             except Exception as exc:
-                raise Exception('Error checking changeable for column %s: %s' % (_a, exc))
+                raise Exception(f'Error checking changeable for column {_a}: {exc}') from exc
         logger.info('column_changeables: %s', column_changeables)
 
         # Load data rows and convert to ARFF format.
@@ -327,7 +335,7 @@ class Optimizer:
             try:
                 if not row:
                     continue
-                assert len(row) == len(column_names), "Row %i has length %i but there are %i column headers." % (row_count, len(row), len(column_names))
+                assert len(row) == len(column_names), f"Row {row_count} has length {len(row)} but there are {len(column_names)} column headers."
                 assert len(row) == len(column_types)
                 old_row = dict(zip(column_names, row))
                 new_row = {}
@@ -351,43 +359,41 @@ class Optimizer:
                             if _row_value:
                                 row_value = _row_value.date()
                                 old_row[column_name] = row_value
-                        assert isinstance(row_value, date), 'Invalid date "%s" on row %s.' % (row_value, row_count)
+                        assert isinstance(row_value, date), f'Invalid date "{row_value}" on row {row_count}.'
                         continue
-                    elif ct == NUMERIC:
+
+                    if ct == NUMERIC:
                         if row_value != '':
                             row_value = attempt_cast_str_to_numeric(row_value)
-                            assert isinstance(row_value, (int, bool, float)), 'Invalid numeric value "%s" of type "%s" in column "%s" of row %i.' \
-                                % (row_value, type(row_value), column_name, row_count)
+                            assert isinstance(row_value, (int, bool, float)), \
+                                f'Invalid numeric value "{row_value}" of type "{type(row_value)}" in column "{column_name}" of row {row_count}.'
                             new_row[column_name] = Num(row_value)
                         else:
                             # Otherwise, ignore empty cell values, which means the data is missing.
                             continue
                     elif ct[0] == '{':
                         if row_value != '':
-                            assert str(row_value) in column_nominals[column_name], 'Invalid nominal value "%s" for column "%s". Legal values: %s' \
-                                % (row_value, column_name, ', '.join(sorted(map(str, column_nominals[column_name]))))
+                            _legal_value_list = ', '.join(sorted(map(str, column_nominals[column_name])))
+                            assert str(row_value) in column_nominals[column_name], \
+                                f'Invalid nominal value "{row_value}" for column "{column_name}". Legal values: {_legal_value_list}'
                             new_row[column_name] = Nom(str(row_value))
                         else:
                             # Otherwise, ignore empty cell values, which means the data is missing.
                             continue
                     else:
-                        raise NotImplementedError('Unknown type/column: %s/%s' % (ct, column_name))
+                        raise NotImplementedError(f'Unknown type/column: {ct}/{column_name}')
 
                     column_values[column_name].add(new_row[column_name])
                     field_to_day_count.setdefault(column_name, 0)
                     field_to_day_count[column_name] += new_row[column_name] != '' and new_row[column_name] is not None
 
                 new_row['date'] = old_row['date']
-                # date_to_row[old_row['date']] = new_row
                 assert isinstance(old_row['date'], date)
                 date_to_score[old_row['date']] = new_row[self.score_field_name]
                 logging.info("new_row:'%s':value: %s", self.score_field_name, new_row[self.score_field_name].value)
                 best_day = max(best_day, (new_row[self.score_field_name].value, new_row), key=lambda o: o[0])
                 best_date = max(best_date, (new_row[self.score_field_name].value, old_row['date']), key=lambda o: o[0])
                 last_full_day = max(last_full_day, (old_row['date'], new_row), key=lambda o: o[0])
-                # date_to_row[new_row['date']] = new_row
-                
-                #arff.append(new_row)
                 new_rows.append(new_row)
             except SkipRow:
                 pass
@@ -415,7 +421,7 @@ class Optimizer:
                 logger.info('next_date: %s', next_date)
                 logger.info('next_score.value: %s', next_score.value)
                 assert current_date < next_date
-                
+
                 # CS 2018.9.26 Disabled because I think this may be stalling, when it doesn't see an incremental improvement.
                 # Reverting to total score prediction.
                 #
@@ -439,8 +445,8 @@ class Optimizer:
 
         if self.plot_attributes:
             for attr_name in self.plot_attributes:
-                assert attr_name in column_types_dict, 'Unknown attribute: %s' % attr_name
-                assert column_types_dict[attr_name] == NUMERIC, 'Attribute %s is not numeric.' % attr_name
+                assert attr_name in column_types_dict, f'Unknown attribute: {attr_name}'
+                assert column_types_dict[attr_name] == NUMERIC, f'Attribute {attr_name} is not numeric.'
                 x, y = isolate_attr(modified_rows, attr_name)
                 self.plot(x, y, attr_name, show=True)
             return
@@ -448,9 +454,12 @@ class Optimizer:
         if self.calculate_pcc:
             # https://en.wikipedia.org/wiki/Pearson_correlation_coefficient
             pcc_rows = []
-            with open(os.path.join(REPORTS_DIR, 'pcc-%s.csv' % date.today()), 'w') as fout:
+            with open(os.path.join(REPORTS_DIR, f'pcc-{date.today()}.csv'), 'w', encoding='ascii') as fout:
                 fieldnames = [
-                    'name', 'samples', 'pcc', 'utility',
+                    'name',
+                    'samples',
+                    'pcc',
+                    'utility',
                     'linear_error',
                     'sigmoid_error',
                     'guassian_error',
@@ -472,17 +481,19 @@ class Optimizer:
 
                     linear_error, guassian_error, sigmoid_error, max_binned_median, max_binned_center = self.plot(x, y, target_attr, show=False)
 
-                    pcc_rows.append(dict(
-                        name=target_attr,
-                        pcc=pcc,
-                        samples=samples,
-                        utility=samples*pcc,
-                        linear_error=linear_error,
-                        sigmoid_error=guassian_error,
-                        guassian_error=sigmoid_error,
-                        max_binned_median=max_binned_median,
-                        max_binned_center=max_binned_center,
-                    ))
+                    pcc_rows.append(
+                        dict(
+                            name=target_attr,
+                            pcc=pcc,
+                            samples=samples,
+                            utility=samples * pcc,
+                            linear_error=linear_error,
+                            sigmoid_error=guassian_error,
+                            guassian_error=sigmoid_error,
+                            max_binned_median=max_binned_median,
+                            max_binned_center=max_binned_center,
+                        )
+                    )
                 pcc_rows.sort(key=lambda o: o['utility'])
                 for pcc_row in pcc_rows:
                     writer.writerow(pcc_row)
@@ -495,25 +506,25 @@ class Optimizer:
 
         # Report any processing errors on each row.
         if row_errors:
-            logger.info('='*80)
+            logger.info('=' * 80)
             logger.info('Row Errors: %s', len(row_errors))
             for row_count in sorted(row_errors):
                 logger.info('Row %i:', row_count)
                 logger.info(row_errors[row_count])
-            logger.info('='*80)
+            logger.info('=' * 80)
         else:
             logger.info('No row errors.')
-            
+
         # Ensure the base arff file has all nominals values, even if they weren't used.
-        for name in column_nominals:
-            if name in arff.attribute_data:
-                arff.attribute_data[name].update(column_nominals[name])
+        for _name, _value in column_nominals.items():
+            if _name in arff.attribute_data:
+                arff.attribute_data[_name].update(_value)
 
         training_fn = os.path.join(BASE_DIR, self.fqfn_base + '.arff')
         logger.info('training_fn: %s', training_fn)
-        
+
         logger.info('Writing arff...')
-        with open(training_fn, 'w') as fout:
+        with open(training_fn, 'w', encoding='ascii') as fout:
             arff.write(fout)
         logger.info('Arff written!')
 
@@ -534,24 +545,24 @@ class Optimizer:
             ]
         if self.no_train:
             assert os.path.isfile(self.classifier_fn), \
-                'If training is disabled, then a classifier file must exist to re-use, but %s does not exist.' % self.classifier_fn
+                f'If training is disabled, then a classifier file must exist to re-use, but {self.classifier_fn} does not exist.'
             logger.info('Loading classifier from file %s...', self.classifier_fn)
             classifier = EnsembleClassifier.load(self.classifier_fn)
             logger.info('Classifier loaded.')
         else:
             classifier = EnsembleClassifier(classes=classes)
             classifier.train(training_data=training_fn, verbose=self.all_classifiers)
-        logger.info('='*80)
+        logger.info('=' * 80)
         logger.info('best:')
         classifier.get_training_best()
-        logger.info('='*80)
-        logger.info('coverage: %.02f%%', classifier.get_training_coverage()*100)
+        logger.info('=' * 80)
+        logger.info('coverage: %.02f%%', classifier.get_training_coverage() * 100)
         if self.all_classifiers:
             logger.info('Aborting query with all classifiers.')
             sys.exit(0)
 
         # Find day with best score.
-        logger.info('='*80)
+        logger.info('=' * 80)
         best_day_score, best_day_data = best_day
         logger.info('best_day_score: %s', best_day_score)
         logger.info('best_day_data:')
@@ -560,12 +571,12 @@ class Optimizer:
         logger.info('last full day: %s', last_full_day)
         last_full_day_date = last_full_day[0]
         if self.yes is None and abs((last_full_day_date - date.today()).days) > 1:
-            if input('Last full day is %s, which is over 1 day ago. Continue? [yn]:' % last_full_day_date).lower()[0] != 'y':
+            if input(f'Last full day is {last_full_day_date}, which is over 1 day ago. Continue? [yn]:').lower()[0] != 'y':
                 sys.exit(1)
 
         # Generate query sets for each variable metric. Base them on the best day, and incrementally change them from there, to avoid drastic changes
         # which may have harmful medical side-effects.
-        logger.info('='*80)
+        logger.info('=' * 80)
         logger.info('ranges:')
         for _name, _range in sorted(column_ranges.items(), key=lambda o: o[0]):
             logger.info(_name, _range)
@@ -581,7 +592,7 @@ class Optimizer:
 
             if name in column_predictables and not column_predictables[name]:
                 continue
-                
+
             logger.info('Query attribute name: %s', name)
             if isinstance(list(column_values[name])[0], Nom):
                 logger.info('Nominal attribute.')
@@ -592,7 +603,7 @@ class Optimizer:
                     new_query[name] = direction
                     best_value = best_data.get(name, sorted(column_nominals[name])[0])
                     if best_value != query_value:
-                        description = '%s: change from %s -> %s' % (name, best_value, query_value)
+                        description = f'{name}: change from {best_value} -> {query_value}'
                         logger.info('\t%s', description)
                         queries.append((name, description, new_query))
             else:
@@ -608,52 +619,52 @@ class Optimizer:
                     _value = _min
                     while _value <= _max:
                         logger.info('Checking query %s=%s.', name, _value)
-                        
+
                         new_query = copy.deepcopy(best_data)
-                        
+
                         # If our best day starting point is missing this metric, then use the mean.
                         _mean = None
                         if name not in new_query:
                             new_query[name] = sum(column_values[name], Num(0.0)) / len(column_values[name])
                             _mean = copy.deepcopy(new_query[name])
-                        
+
                         # Skip the hold case.
                         if _value == best_data.get(name, _mean):
                             logger.info('Hold case. Skipping.')
                             continue
-                        
+
                         new_query[name].value = _value
                         if best_data.get(name, _mean) != new_query[name]:
                             logger.info('\tallowable range min/max/step: %s %s %s', _min, _max, _step)
-                            description = '%s: change from %s -> %s' % (name, best_data.get(name, _mean), new_query[name].value)
+                            description = f'{name}: change from {best_data.get(name, _mean)} -> {new_query[name].value}'
                             logger.info('\t%s', description)
                             assert _min <= new_query[name].value <= _max
                             queries.append((name, description, new_query))
-                            
+
                         _value += _step
                 else:
                     # Check only a relative change.
                     for direction in [-1, 1]:
                         new_query = copy.deepcopy(best_data)
-                        
+
                         # If our best day starting point is missing this metric, then use the mean.
                         _mean = None
                         if name not in new_query:
                             new_query[name] = sum(column_values[name], Num(0.0)) / len(column_values[name])
                             _mean = copy.deepcopy(new_query[name])
-                        
+
                         new_query[name].value += direction * _step
                         new_query[name].value = min(new_query[name].value, _max)
                         new_query[name].value = max(new_query[name].value, _min)
                         if best_data.get(name, _mean) != new_query[name]:
                             logger.info('\tallowable range min/max/step: %s %s %s', _min, _max, _step)
-                            description = '%s: change from %s -> %s' % (name, best_data.get(name, _mean), new_query[name])
+                            description = f'{name}: change from {best_data.get(name, _mean)} -> {new_query[name]}'
                             logger.info('\t%s', description)
                             queries.append((name, description, new_query))
-            
+
             # Re-evaluate the current state.
             new_query = copy.deepcopy(best_data)
-            description = '%s: hold at %s' % (name, best_data.get(name, _mean))
+            description = f'{name}: hold at {best_data.get(name, _mean)}'
             queries.append((name, description, new_query))
 
         if save:
@@ -662,7 +673,7 @@ class Optimizer:
             logger.info('Classifier saved to %s.', self.classifier_fn)
 
         # Score each query.
-        logger.info('='*80)
+        logger.info('=' * 80)
         total = len(queries)
         i = 0
         final_recommendations = [] # [(predicted change, old score, new score, description, name)]
@@ -677,10 +688,10 @@ class Optimizer:
             for _column, _controllable in column_learnables.items():
                 if not _controllable and _column in query_data:
                     del query_data[_column]
-                
+
             logger.info('query_data: %s', sorted(query_data))
             new_arff.append(query_data)
-            logger.info('$'*80)
+            logger.info('$' * 80)
             logger.info('predicting...')
             predictions = list(classifier.predict(new_arff, tolerance=TOLERANCE, verbose=1, cleanup=0))
             logger.info('\tdesc: %s', description)
@@ -696,15 +707,15 @@ class Optimizer:
             final_scores[name] = max(final_scores[name], (score_change, description))
 
         # Show top predictors.
-        logger.info('='*80)
+        logger.info('=' * 80)
         logger.info('best predictors:')
         best_names = classifier.get_best_predictors(tolerance=TOLERANCE, verbose=True)
         logger.info(best_names)
         seed_date = last_full_day[0]
 
         # Show final top recommendations by attribute.
-        print('='*80)
-        print('recommendations by attribute based on date: %s' % seed_date)
+        print('=' * 80)
+        print(f'recommendations by attribute based on date: {seed_date}')
         final_recommendations.sort(key=lambda o: (o[4], o[0]))
         i = 0
         digits = len(str(len(final_recommendations)))
@@ -713,24 +724,51 @@ class Optimizer:
             best_score_change, best_description = final_scores[name]
             if description != best_description:
                 continue
-            print(('\t%0'+str(digits)+'i %s => %.06f') % (i, description, change))
+            print(('\t%0' + str(digits) + 'i %s => %.06f') % (i, description, change))
 
         # Show final top recommendations by best change.
         final_recommendations.sort()
 
-        print('='*80)
-        print('Evening recommendations by change based on date: %s' % seed_date)
+        print('=' * 80)
+        print(f'Evening recommendations by change based on date: {seed_date}')
         print_recommendation(final_recommendations, final_scores, typ=EV)
 
-        print('='*80)
-        print('Morning recommendations by change based on date: %s' % seed_date)
+        print('=' * 80)
+        print(f'Morning recommendations by change based on date: {seed_date}')
         print_recommendation(final_recommendations, final_scores, typ=MN)
 
-        print('='*80)
-        print('Other recommendations by change based on date: %s' % seed_date)
+        print('=' * 80)
+        print(f'Other recommendations by change based on date: {seed_date}')
         print_recommendation(final_recommendations, final_scores, typ=OTHERS)
 
+        self.write_report(final_recommendations, final_scores)
+
         return final_recommendations, final_scores
+
+    def write_report(self, recommendations, scores):
+        fn = os.path.join(REPORTS_DIR, 'analysis-{date.today()}.csv')
+        logger.info('Writing analysis report to %s.', fn)
+        with open(fn, 'w', encoding='ascii') as fout:
+            fieldnames = [
+                'name',
+                'recommended action',
+                'recommended value',
+                'expected change',
+            ]
+            writer = csv.DictWriter(fout, fieldnames=fieldnames)
+            writer.writerow(dict(zip(fieldnames, fieldnames)))
+            for change, _old_score, _new_score, description, name in recommendations:
+                best_score_change, best_description = scores[name]
+                if description != best_description:
+                    continue
+                best_action, best_value = best_description.split(' at ')
+                writer.writerow({
+                    'name': name,
+                    'recommended action': best_action,
+                    'recommended value': best_value,
+                    'expected change': change,
+                })
+        logger.info('Wrote analysis report to %s.', fn)
 
 
 def print_recommendation(recs, scores, typ=None):
@@ -741,14 +779,14 @@ def print_recommendation(recs, scores, typ=None):
         if typ:
             if typ == EV and EV not in name:
                 continue
-            elif typ == MN and MN not in name:
+            if typ == MN and MN not in name:
                 continue
-            elif typ == OTHERS and (EV in name or MN in name):
+            if typ == OTHERS and (EV in name or MN in name):
                 continue
         best_score_change, best_description = scores[name]
         if description != best_description:
             continue
-        print(('\t%0'+str(digits)+'i %s => %.06f') % (i, description, change))
+        print(('\t%0' + str(digits) + 'i %s => %.06f') % (i, description, change))
 
 
 if __name__ == '__main__':
@@ -758,16 +796,24 @@ if __name__ == '__main__':
     parser.add_argument('--only-attribute', default=None, help='If given, only predicts the effect of this one attribute. Otherwise looks at all attributes.')
     parser.add_argument('--stop-on-error', action='store_true', default=False, help='If given, halts at first error. Otherwise shows a warning and continues.')
     parser.add_argument('--no-train', action='store_true', default=False, help='If given, skips training and re-uses last trained classifier.')
-    parser.add_argument('--score-field-name', default=None,
-        help='The name of the field containing the score to maximize. Default is "%s".' % DEFAULT_SCORE_FIELD_NAME)
-    parser.add_argument('--all-classifiers', action='store_true', default=False,
-        help='If given, trains all classifiers, even the crappy ones. Otherwise, only uses the known best.')
-    parser.add_argument('--calculate-pcc', action='store_true', default=False,
-        help='If given, calculates the Pearson correlation coefficient for all attributes.')
-    parser.add_argument('--plot-attributes', default='',
-        help='Comma-delimited list of columns names to plot, where x-axis is the column value and y-axis is the score value mean.')
-    parser.add_argument('--yes', default=None, action='store_true',
-        help='Enables non-interactive mode and assumes yes for any interactive yes/no prompts.')
+    parser.add_argument(
+        '--score-field-name', default=None, help=f'The name of the field containing the score to maximize. Default is "{DEFAULT_SCORE_FIELD_NAME}".'
+    )
+    parser.add_argument(
+        '--all-classifiers',
+        action='store_true',
+        default=False,
+        help='If given, trains all classifiers, even the crappy ones. Otherwise, only uses the known best.'
+    )
+    parser.add_argument(
+        '--calculate-pcc', action='store_true', default=False, help='If given, calculates the Pearson correlation coefficient for all attributes.'
+    )
+    parser.add_argument(
+        '--plot-attributes',
+        default='',
+        help='Comma-delimited list of columns names to plot, where x-axis is the column value and y-axis is the score value mean.'
+    )
+    parser.add_argument('--yes', default=None, action='store_true', help='Enables non-interactive mode and assumes yes for any interactive yes/no prompts.')
     args = parser.parse_args()
     o = Optimizer(**args.__dict__)
     o.analyze()
