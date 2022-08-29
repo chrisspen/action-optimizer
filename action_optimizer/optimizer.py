@@ -15,9 +15,9 @@ from decimal import Decimal
 from collections import defaultdict
 
 import numpy as np
+from numpy import exp
 import matplotlib.pyplot as plt
 import scipy.optimize
-from scipy import exp
 from scipy.stats import norm, binned_statistic
 from dateutil.parser import parse
 from pyexcel_ods import get_data
@@ -579,7 +579,7 @@ class Optimizer:
         logger.info('=' * 80)
         logger.info('ranges:')
         for _name, _range in sorted(column_ranges.items(), key=lambda o: o[0]):
-            logger.info(_name, _range)
+            print('Column:', _name, _range)
         _, best_data = last_full_day
         queries = [] # [(name, description, data)]
         query_name_list = sorted(column_values)
@@ -746,7 +746,7 @@ class Optimizer:
         return final_recommendations, final_scores
 
     def write_report(self, recommendations, scores):
-        fn = os.path.join(REPORTS_DIR, 'analysis-{date.today()}.csv')
+        fn = os.path.join(REPORTS_DIR, f'analysis-{date.today()}.csv')
         logger.info('Writing analysis report to %s.', fn)
         with open(fn, 'w', encoding='ascii') as fout:
             fieldnames = [
@@ -758,15 +758,23 @@ class Optimizer:
             writer = csv.DictWriter(fout, fieldnames=fieldnames)
             writer.writerow(dict(zip(fieldnames, fieldnames)))
             for change, _old_score, _new_score, description, name in recommendations:
+                print('name:', name)
                 best_score_change, best_description = scores[name]
                 if description != best_description:
                     continue
-                best_action, best_value = best_description.split(' at ')
+                print('best_description:', best_description)
+                best_description = best_description.split(':')[-1].strip()
+                if ' at ' in best_description:
+                    best_action, best_value = best_description.split(' at ')
+                elif ' from ' in best_description:
+                    best_action, best_value = best_description.split(' from ')
+                else:
+                    raise Exception(f'Invalid description: {best_description}')
                 writer.writerow({
                     'name': name,
                     'recommended action': best_action,
                     'recommended value': best_value,
-                    'expected change': change,
+                    'expected change': round(change, 2),
                 })
         logger.info('Wrote analysis report to %s.', fn)
 

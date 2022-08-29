@@ -7,15 +7,18 @@ import action_optimizer
 
 CURRENT_DIR = os.path.abspath(os.path.dirname(__file__))
 
+
 def get_reqs(*fns):
     lst = []
     for fn in fns:
-        for package in open(os.path.join(CURRENT_DIR, fn)).readlines():
-            package = package.strip()
-            if not package:
-                continue
-            lst.append(package.strip())
+        with open(os.path.join(CURRENT_DIR, fn), encoding='utf-8') as fin:
+            for package in fin.readlines():
+                package = package.strip()
+                if not package:
+                    continue
+                lst.append(package.strip())
     return lst
+
 
 setup(
     name="action_optimizer",
