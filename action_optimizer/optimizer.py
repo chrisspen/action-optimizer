@@ -508,8 +508,8 @@ class Optimizer:
                             samples=samples,
                             utility=samples * pcc,
                             linear_error=linear_error,
-                            gaussian_error=sigmoid_error,
-                            sigmoid_error=gaussian_error,
+                            gaussian_error=gaussian_error,
+                            sigmoid_error=sigmoid_error,
                             best_binned_value=best_binned_value,
                             best_binned_center=best_binned_center,
                         )
