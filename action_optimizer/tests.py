@@ -9,7 +9,7 @@ import os
 import unittest
 from pprint import pprint
 
-from optimizer import Optimizer
+from optimizer import Optimizer, fit_gaussian, gaussian_func, fit_linear, linear_func, r2_score, fit_sigmoid, sigmoid_func
 
 SHOW_GRAPH = int(os.environ.get('SHOW_GRAPH', 0))
 
@@ -52,9 +52,8 @@ class Tests(unittest.TestCase):
         import numpy as np
         import matplotlib.pyplot as plt
         from scipy.stats import norm
-        from sklearn.metrics import r2_score
 
-        from optimizer import fit_linear, linear_func, sigmoid_func, guassian_func
+        # from optimizer import fit_linear, linear_func, sigmoid_func, guassian_func
 
         plt.clf()
 
@@ -84,7 +83,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(round(cod), 1.0)
 
         # Confirm no other curves fit as well.
-        for _func in [sigmoid_func, guassian_func]:
+        for _func in [sigmoid_func, gaussian_func]:
             other_cod = r2_score(pure, _func(x, signal))
             # print('func:', _func, other_cod)
             self.assertNotEqual(round(other_cod), 1.0)
@@ -93,9 +92,9 @@ class Tests(unittest.TestCase):
         import numpy as np
         import matplotlib.pyplot as plt
         from scipy.stats import norm
-        from sklearn.metrics import r2_score
+        # from sklearn.metrics import r2_score
 
-        from optimizer import fit_sigmoid, linear_func, sigmoid_func, guassian_func
+        # from optimizer import linear_func, sigmoid_func, guassian_func
 
         plt.clf()
 
@@ -124,7 +123,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(round(cod), 1.0)
 
         # Confirm no other curves fit as well.
-        for _func in [linear_func, guassian_func]:
+        for _func in [linear_func, gaussian_func]:
             other_cod = r2_score(pure, _func(x, signal))
             self.assertNotEqual(round(other_cod), 1.0)
 
@@ -132,15 +131,15 @@ class Tests(unittest.TestCase):
         import numpy as np
         import matplotlib.pyplot as plt
         from scipy.stats import norm
-        from sklearn.metrics import r2_score
+        # from sklearn.metrics import r2_score
 
-        from optimizer import fit_guassian, linear_func, sigmoid_func, guassian_func
+        # from optimizer import fit_guassian, linear_func, sigmoid_func, guassian_func
 
         plt.clf()
 
         # Generate pure guassian curve.
         x = np.linspace(-10, 10, 100)
-        pure = guassian_func(x + 5) + 10 # Add horizontal and vertical offset.
+        pure = gaussian_func(x + 5) + 10 # Add horizontal and vertical offset.
         plt.plot(x, pure, label='Pure')
 
         # Add noise to guassian curve.
@@ -148,7 +147,7 @@ class Tests(unittest.TestCase):
         plt.scatter(x, signal, label='Pure + Noise', color='red', marker='.')
 
         # Estimate the original curve from the noise.
-        estimate = fit_guassian(x, signal)
+        estimate = fit_gaussian(x, signal)
         plt.plot(x, estimate, linewidth=2, label='Fit')
 
         # Calculate error.
@@ -163,6 +162,30 @@ class Tests(unittest.TestCase):
         if SHOW_GRAPH:
             plt.legend()
             plt.show()
+
+    def test_gaussian_bed_data(self):
+        import numpy as np
+        d = np.loadtxt('action_optimizer/fixtures/bed-values.csv', delimiter=',')
+        x = d[:, 0]
+        print('x:', x)
+        y = d[:, 1]
+        print('y:', y)
+
+        linear_estimate = fit_linear(x, y)
+        print('linear_estimate:', linear_estimate)
+        linear_cod = r2_score(y, linear_estimate)
+        print('linear_cod:', linear_cod)
+        linear_error = abs(1 - linear_cod)
+        print('linear_error:', linear_error)
+        self.assertTrue(linear_error)
+
+        gaussian_estimate = fit_gaussian(x, y)
+        print('gaussian_estimate:', gaussian_estimate)
+        gaussian_cod = r2_score(y, gaussian_estimate)
+        print('gaussian_cod:', gaussian_cod)
+        gaussian_error = abs(1 - gaussian_cod)
+        print('gaussian_error:', gaussian_error)
+        self.assertTrue(gaussian_error)
 
 
 if __name__ == '__main__':

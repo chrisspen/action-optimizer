@@ -75,7 +75,7 @@ DEFAULT_SCORE_FIELD_NAME = 'score'
 DEFAULT_CLASSIFIER_FN = '/tmp/%s-last-classifier.pkl.gz'
 DEFAULT_RELATION = '%s-training'
 
-REPORTS_DIR = './reports'
+BASE_REPORTS_DIR = './reports'
 
 
 def attempt_cast_str_to_numeric(value):
@@ -115,7 +115,7 @@ def gaussian(x, mu, sig):
     return np.exp(-np.power(x - mu, 2.) / (2 * np.power(sig, 2.)))
 
 
-def guassian_func(x, a=1, b=0, c=1, d=0):
+def gaussian_func(x, a=1, b=0, c=1, d=0):
     """
     Generates a bell curve.
 
@@ -138,11 +138,11 @@ def fit_sigmoid(x, y):
     return sigmoid_func(x, *popt)
 
 
-def fit_guassian(x, y):
+def fit_gaussian(x, y):
     mean = sum(x * y) / sum(y)
     sigma = np.sqrt(sum(y * (x - mean)**2) / sum(y))
-    popt, pcov = scipy.optimize.curve_fit(guassian_func, x, y, p0=[max(y), mean, sigma, 0])
-    return guassian_func(x, *popt)
+    popt, pcov = scipy.optimize.curve_fit(gaussian_func, x, y, p0=[max(y), mean, sigma, 0])
+    return gaussian_func(x, *popt)
 
 
 class Optimizer:
@@ -174,6 +174,7 @@ class Optimizer:
 
     def plot(self, x, y, name, show=False):
 
+        logger.info('Plotting functional estimates for %s.', name)
         plt.clf()
 
         # Generate pure sigmoid curve.
@@ -181,32 +182,44 @@ class Optimizer:
 
         # Estimate the original curve from the noise.
         linear_estimate = fit_linear(x, y)
-        guassian_estimate = guassian_func(x, y)
-        sigmoid_estimate = sigmoid_func(x, y)
+        logger.info('Linear estimate: %s', linear_estimate)
 
-        linear_cod = guassian_cod = sigmoid_cod = None
-        linear_error = guassian_error = sigmoid_error = None
+        try:
+            gaussian_estimate = fit_gaussian(x, y)
+            logger.info('Gaussian estimate: %s', gaussian_estimate)
+        except RuntimeError as exc:
+            logger.warning('Unable to fit gaussian for %s: %s', name, exc)
+            gaussian_estimate = None
+
+        try:
+            sigmoid_estimate = fit_sigmoid(x, y)
+            logger.info('Sigmoid estimate: %s', sigmoid_estimate)
+        except RuntimeError as exc:
+            logger.warning('Unable to fit sigmoid for %s: %s', name, exc)
+            sigmoid_estimate = None
+
+        linear_cod = gaussian_cod = sigmoid_cod = None
+        linear_error = gaussian_error = sigmoid_error = None
 
         try:
             linear_cod = r2_score(y, linear_estimate)
             linear_error = abs(1 - linear_cod)
-            print('linear_cod:', linear_cod)
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as exc:
+            logger.warning('Unable to calculate linear error: %s', exc)
 
         try:
-            guassian_cod = r2_score(y, guassian_estimate)
-            guassian_error = abs(1 - guassian_cod)
-            print('guassian_cod:', guassian_cod)
-        except (TypeError, ValueError):
-            pass
+            gaussian_cod = r2_score(y, gaussian_estimate)
+            print('gaussian_cod:', gaussian_cod)
+            gaussian_error = abs(1 - gaussian_cod)
+            print('gaussian_error:', gaussian_error)
+        except (TypeError, ValueError) as exc:
+            logger.warning('Unable to calculate gaussian error: %s', exc)
 
         try:
             sigmoid_cod = r2_score(y, sigmoid_estimate)
             sigmoid_error = abs(1 - sigmoid_error)
-            print('sigmoid_cod:', sigmoid_cod)
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as exc:
+            logger.warning('Unable to calculate sigmoid error: %s', exc)
 
         binned_result = binned_statistic(x, y, statistic='median', bins=10)
         binned_x = []
@@ -221,22 +234,24 @@ class Optimizer:
                 best_bin = _y, _x
             else:
                 best_bin = max(best_bin, (_y, _x))
-        best_binned_media, best_binned_center = best_bin
-        print('best_bin:', best_bin)
+        best_binned_value, best_binned_center = best_bin
 
-        plt.scatter(x, linear_estimate, label='Linear', marker='.')
-        plt.scatter(x, guassian_estimate, label='Guassian', marker='.')
-        plt.scatter(x, sigmoid_estimate, label='Sigmoid', marker='.')
+        if linear_estimate is not None:
+            plt.scatter(x, linear_estimate, label='Linear', marker='.')
+        if gaussian_estimate is not None:
+            plt.scatter(x, gaussian_estimate, label='Guassian', marker='.')
+        if sigmoid_estimate is not None:
+            plt.scatter(x, sigmoid_estimate, label='Sigmoid', marker='.')
 
         plt.plot(binned_x, binned_y, label='Binned Median')
 
         plt.title(name)
         plt.legend()
-        plt.savefig(f'./reports/{name}.png')
+        plt.savefig(f'{BASE_REPORTS_DIR}/{date.today()}/{name}.png')
         if show:
             plt.show()
 
-        return linear_error, guassian_error, sigmoid_error, best_binned_media, best_binned_center
+        return linear_error, gaussian_error, sigmoid_error, best_binned_value, best_binned_center
 
     def analyze(self, save=True):
         self.score_field_name = self.score_field_name or DEFAULT_SCORE_FIELD_NAME
@@ -390,7 +405,7 @@ class Optimizer:
                 new_row['date'] = old_row['date']
                 assert isinstance(old_row['date'], date)
                 date_to_score[old_row['date']] = new_row[self.score_field_name]
-                logging.info("new_row:'%s':value: %s", self.score_field_name, new_row[self.score_field_name].value)
+                #logging.info("new_row:'%s':value: %s", self.score_field_name, new_row[self.score_field_name].value)
                 best_day = max(best_day, (new_row[self.score_field_name].value, new_row), key=lambda o: o[0])
                 best_date = max(best_date, (new_row[self.score_field_name].value, old_row['date']), key=lambda o: o[0])
                 last_full_day = max(last_full_day, (old_row['date'], new_row), key=lambda o: o[0])
@@ -454,17 +469,19 @@ class Optimizer:
         if self.calculate_pcc:
             # https://en.wikipedia.org/wiki/Pearson_correlation_coefficient
             pcc_rows = []
-            with open(os.path.join(REPORTS_DIR, f'pcc-{date.today()}.csv'), 'w', encoding='ascii') as fout:
+            report_dir = os.path.join(BASE_REPORTS_DIR, str(date.today()))
+            os.makedirs(report_dir, exist_ok=True)
+            with open(os.path.join(report_dir, 'pcc.csv'), 'w', encoding='ascii') as fout:
                 fieldnames = [
                     'name',
                     'samples',
                     'pcc',
                     'utility',
                     'linear_error',
+                    'gaussian_error',
                     'sigmoid_error',
-                    'guassian_error',
-                    'max_binned_median',
-                    'max_binned_center',
+                    'best_binned_value',
+                    'best_binned_center',
                 ]
                 writer = csv.DictWriter(fout, fieldnames=fieldnames)
                 writer.writerow(dict(zip(fieldnames, fieldnames)))
@@ -477,9 +494,12 @@ class Optimizer:
                     logger.info('Pearson correlation for %s: %s', target_attr, pcc)
                     samples = len(x)
                     if math.isnan(pcc):
+                        logger.warning('Skipping attribute "%s" because PCC could not be calculated.', target_attr)
                         continue
 
-                    linear_error, guassian_error, sigmoid_error, max_binned_median, max_binned_center = self.plot(x, y, target_attr, show=False)
+                    linear_error, gaussian_error, sigmoid_error, best_binned_value, best_binned_center = self.plot(x, y, target_attr, show=False)
+                    print('linear_error, gaussian_error, sigmoid_error:', linear_error, gaussian_error, sigmoid_error)
+                    assert gaussian_error is not None
 
                     pcc_rows.append(
                         dict(
@@ -488,10 +508,10 @@ class Optimizer:
                             samples=samples,
                             utility=samples * pcc,
                             linear_error=linear_error,
-                            sigmoid_error=guassian_error,
-                            guassian_error=sigmoid_error,
-                            max_binned_median=max_binned_median,
-                            max_binned_center=max_binned_center,
+                            gaussian_error=sigmoid_error,
+                            sigmoid_error=gaussian_error,
+                            best_binned_value=best_binned_value,
+                            best_binned_center=best_binned_center,
                         )
                     )
                 pcc_rows.sort(key=lambda o: o['utility'])
@@ -746,7 +766,9 @@ class Optimizer:
         return final_recommendations, final_scores
 
     def write_report(self, recommendations, scores):
-        fn = os.path.join(REPORTS_DIR, f'analysis-{date.today()}.csv')
+        report_dir = os.path.join(BASE_REPORTS_DIR, str(date.today()))
+        os.makedirs(report_dir, exist_ok=True)
+        fn = os.path.join(report_dir, 'ensemble.csv')
         logger.info('Writing analysis report to %s.', fn)
         with open(fn, 'w', encoding='ascii') as fout:
             fieldnames = [
@@ -758,11 +780,9 @@ class Optimizer:
             writer = csv.DictWriter(fout, fieldnames=fieldnames)
             writer.writerow(dict(zip(fieldnames, fieldnames)))
             for change, _old_score, _new_score, description, name in recommendations:
-                print('name:', name)
                 best_score_change, best_description = scores[name]
                 if description != best_description:
                     continue
-                print('best_description:', best_description)
                 best_description = best_description.split(':')[-1].strip()
                 if ' at ' in best_description:
                     best_action, best_value = best_description.split(' at ')
