@@ -536,7 +536,7 @@ class Optimizer:
                         best_choices.append((sigmoid_error, sigmoid_best))
                     if best_choices:
                         best_choices.sort()
-                        best_error, best_value = best_choices[-1]
+                        best_error, best_value = best_choices[0]
 
                     pcc_rows.append(
                         dict(
