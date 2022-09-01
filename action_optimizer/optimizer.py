@@ -145,6 +145,20 @@ def fit_gaussian(x, y):
     return gaussian_func(x, *popt)
 
 
+def argmax(x, y):
+    """
+    Returns a tuple of the form (a, b) where a is a value in x associated with the highest value in y, which is b.
+    """
+    best = None
+    for _x, _y in zip(x, y):
+        if best is None:
+            best = (_y, _x)
+        else:
+            best = max(best, (_y, _x))
+    best_y, best_x = best
+    return best_x, best_y
+
+
 class Optimizer:
 
     def __init__(self, fn, **kwargs):
@@ -200,10 +214,12 @@ class Optimizer:
 
         linear_cod = gaussian_cod = sigmoid_cod = None
         linear_error = gaussian_error = sigmoid_error = None
+        linear_best = gaussian_best = sigmoid_best = None
 
         try:
             linear_cod = r2_score(y, linear_estimate)
             linear_error = abs(1 - linear_cod)
+            linear_best = argmax(x, linear_estimate)[0]
         except (TypeError, ValueError) as exc:
             logger.warning('Unable to calculate linear error: %s', exc)
 
@@ -212,12 +228,14 @@ class Optimizer:
             print('gaussian_cod:', gaussian_cod)
             gaussian_error = abs(1 - gaussian_cod)
             print('gaussian_error:', gaussian_error)
+            gaussian_best = argmax(x, gaussian_estimate)[0]
         except (TypeError, ValueError) as exc:
             logger.warning('Unable to calculate gaussian error: %s', exc)
 
         try:
             sigmoid_cod = r2_score(y, sigmoid_estimate)
             sigmoid_error = abs(1 - sigmoid_error)
+            sigmoid_best = argmax(x, sigmoid_estimate)[0]
         except (TypeError, ValueError) as exc:
             logger.warning('Unable to calculate sigmoid error: %s', exc)
 
@@ -251,7 +269,7 @@ class Optimizer:
         if show:
             plt.show()
 
-        return linear_error, gaussian_error, sigmoid_error, best_binned_value, best_binned_center
+        return linear_error, gaussian_error, sigmoid_error, best_binned_value, best_binned_center, linear_best, gaussian_best, sigmoid_best
 
     def analyze(self, save=True):
         self.score_field_name = self.score_field_name or DEFAULT_SCORE_FIELD_NAME
@@ -478,8 +496,13 @@ class Optimizer:
                     'pcc',
                     'utility',
                     'linear_error',
+                    'linear_best',
                     'gaussian_error',
+                    'gaussian_best',
                     'sigmoid_error',
+                    'sigmoid_best',
+                    'best_value',
+                    'best_error',
                     'best_binned_value',
                     'best_binned_center',
                 ]
@@ -497,9 +520,23 @@ class Optimizer:
                         logger.warning('Skipping attribute "%s" because PCC could not be calculated.', target_attr)
                         continue
 
-                    linear_error, gaussian_error, sigmoid_error, best_binned_value, best_binned_center = self.plot(x, y, target_attr, show=False)
+                    linear_error, gaussian_error, sigmoid_error, best_binned_value, best_binned_center, linear_best, gaussian_best, sigmoid_best = self.plot(
+                        x, y, target_attr, show=False
+                    )
                     print('linear_error, gaussian_error, sigmoid_error:', linear_error, gaussian_error, sigmoid_error)
-                    assert gaussian_error is not None
+
+                    best_error = None
+                    best_value = None
+                    best_choices = []
+                    if linear_best is not None:
+                        best_choices.append((linear_error, linear_best))
+                    if gaussian_best is not None:
+                        best_choices.append((gaussian_error, gaussian_best))
+                    if sigmoid_best is not None:
+                        best_choices.append((sigmoid_error, sigmoid_best))
+                    if best_choices:
+                        best_choices.sort()
+                        best_error, best_value = best_choices[-1]
 
                     pcc_rows.append(
                         dict(
@@ -508,8 +545,13 @@ class Optimizer:
                             samples=samples,
                             utility=samples * pcc,
                             linear_error=linear_error,
+                            linear_best=linear_best,
                             gaussian_error=gaussian_error,
+                            gaussian_best=gaussian_best,
                             sigmoid_error=sigmoid_error,
+                            sigmoid_best=sigmoid_best,
+                            best_value=best_value,
+                            best_error=best_error,
                             best_binned_value=best_binned_value,
                             best_binned_center=best_binned_center,
                         )
