@@ -13,6 +13,7 @@ from datetime import date, timedelta
 from pprint import pprint
 from decimal import Decimal
 from collections import defaultdict
+from subprocess import getstatusoutput
 
 import numpy as np
 from numpy import exp
@@ -33,6 +34,13 @@ handler.setLevel(logging.DEBUG)
 formatter = logging.Formatter("%(asctime)s:%(levelname)s:%(message)s", "%Y-%m-%d %H:%M:%S")
 handler.setFormatter(formatter)
 logger.addHandler(handler)
+
+
+def _run(cmd, ignore=False):
+    status, out = getstatusoutput(cmd)
+    if status and not ignore:
+        raise Exception(out)
+    return status, out
 
 
 class SkipRow(Exception):
@@ -176,7 +184,7 @@ class Optimizer:
 
         self.__dict__.update(kwargs)
         self.score_field_name = self.__dict__.get('score_field_name') or DEFAULT_SCORE_FIELD_NAME
-        self.only_attribute = self.__dict__.get('only_attribute')
+        self.only_attributes = [_.strip() for _ in (self.__dict__.get('only_attributes') or '').split(',') if _.strip()]
         self.stop_on_error = self.__dict__.get('stop_on_error') or False
         self.no_train = self.__dict__.get('no_train') or False
         self.all_classifiers = self.__dict__.get('all_classifiers') or False
@@ -185,6 +193,7 @@ class Optimizer:
         self.yes = self.__dict__.get('yes', None)
         self.classifier_fn = self.__dict__.get('classifier_fn', DEFAULT_CLASSIFIER_FN) % self.fn_base
         self.relation = self.__dict__.get('relation', DEFAULT_RELATION) % self.fn_base
+        self.show_all_options = self.__dict__.get('show_all_options') or False
 
     def plot(self, x, y, name, show=False):
 
@@ -315,6 +324,7 @@ class Optimizer:
                 except IndexError as exc:
                     raise Exception(f'Error processing nominal value for column "{column_name}": "{ct}"') from exc
 
+        # Build the index that indicates which columns are allowed to be used when training the regressor.
         column_learnables = self.column_learnables = {}
         for _a, _b in zip(column_names, data[LEARN_ROW_INDEX]):
             if _a == DATE:
@@ -326,6 +336,7 @@ class Optimizer:
                 raise Exception(f'Error checking controllable for column {_a}: {exc}') from exc
         logger.info('column_learnables: %s', column_learnables)
 
+        # Build the index that indicates which columns are allowed to be predicted.
         column_predictables = self.column_predictables = {}
         for _a, _b in zip(column_names, data[PREDICT_ROW_INDEX]):
             if _a == DATE:
@@ -337,6 +348,7 @@ class Optimizer:
                 raise Exception(f'Error checking predictable for column {_a}: {exc}') from exc
         logger.info('column_predictables: %s', column_predictables)
 
+        # Build the index that indicates how we're allowed to hypothetically change columns when predicting.
         column_changeables = self.column_changeables = {}
         for _a, _b in zip(column_names, data[CHANGE_ROW_INDEX]):
             if _a == DATE:
@@ -358,7 +370,14 @@ class Optimizer:
         row_count = 0
         best_day = -1e999999999999, None # (score, data)
         best_date = -1e999999999999, None
+
+        # The most recent row that contains a full line of data and a score.
+        # This is used for comparing predicted scores to last known current score.
         last_full_day = date.min, None # (date, data)
+
+        # The score associated with the last_full_day.
+        last_full_day_score = None
+
         date_to_score = {} # {date: score}
         # date_to_row = {} # {date: row}
         column_values = defaultdict(set)
@@ -427,6 +446,7 @@ class Optimizer:
                 best_day = max(best_day, (new_row[self.score_field_name].value, new_row), key=lambda o: o[0])
                 best_date = max(best_date, (new_row[self.score_field_name].value, old_row['date']), key=lambda o: o[0])
                 last_full_day = max(last_full_day, (old_row['date'], new_row), key=lambda o: o[0])
+                last_full_day_score = Decimal(last_full_day[1][self.score_field_name].value)
                 new_rows.append(new_row)
             except SkipRow:
                 pass
@@ -489,11 +509,13 @@ class Optimizer:
             pcc_rows = []
             report_dir = os.path.join(BASE_REPORTS_DIR, str(date.today()))
             os.makedirs(report_dir, exist_ok=True)
-            with open(os.path.join(report_dir, 'pcc.csv'), 'w', encoding='ascii') as fout:
+            pcc_fn = os.path.join(report_dir, 'pcc.csv')
+            with open(pcc_fn, 'w', encoding='ascii') as fout:
                 fieldnames = [
                     'name',
                     'samples',
                     'pcc',
+                    'pcc_zero',
                     'utility',
                     'linear_error',
                     'linear_best',
@@ -542,6 +564,7 @@ class Optimizer:
                         dict(
                             name=target_attr,
                             pcc=pcc,
+                            pcc_zero=(pcc + 1) / 2,
                             samples=samples,
                             utility=samples * pcc,
                             linear_error=linear_error,
@@ -559,6 +582,14 @@ class Optimizer:
                 pcc_rows.sort(key=lambda o: o['utility'])
                 for pcc_row in pcc_rows:
                     writer.writerow(pcc_row)
+
+            pcc_fn = os.path.abspath(pcc_fn)
+            logger.info('Converting %s to ods.', pcc_fn)
+            _dir, _ = os.path.split(pcc_fn)
+            _run(f'cd {_dir}; soffice --convert-to ods {pcc_fn}')
+            logger.info('Converted %s to ods.', pcc_fn)
+            os.remove(pcc_fn)
+
             return
 
         # Cleanup training arff.
@@ -631,13 +662,14 @@ class Optimizer:
         pprint(best_day_data, indent=4)
         logger.info('best date: %s', best_date)
         logger.info('last full day: %s', last_full_day)
+        logger.info('last full day score: %s', last_full_day_score)
         last_full_day_date = last_full_day[0]
         if self.yes is None and abs((last_full_day_date - date.today()).days) > 1:
             if input(f'Last full day is {last_full_day_date}, which is over 1 day ago. Continue? [yn]:').lower()[0] != 'y':
                 sys.exit(1)
 
         # Generate query sets for each variable metric. Base them on the best day, and incrementally change them from there, to avoid drastic changes
-        # which may have harmful medical side-effects.
+        # which may have harmful side-effects.
         logger.info('=' * 80)
         logger.info('ranges:')
         for _name, _range in sorted(column_ranges.items(), key=lambda o: o[0]):
@@ -645,8 +677,8 @@ class Optimizer:
         _, best_data = last_full_day
         queries = [] # [(name, description, data)]
         query_name_list = sorted(column_values)
-        if self.only_attribute:
-            query_name_list = [self.only_attribute]
+        if self.only_attributes:
+            query_name_list = list(self.only_attributes)
         for name in query_name_list:
 
             if name == CLASS_ATTR_NAME:
@@ -657,8 +689,8 @@ class Optimizer:
 
             logger.info('Query attribute name: %s', name)
             if isinstance(list(column_values[name])[0], Nom):
-                logger.info('Nominal attribute.')
                 # Calculate changes for a nominal column.
+                logger.info('Nominal attribute.')
                 for direction in column_nominals[name]:
                     query_value = direction = Nom(direction)
                     new_query = copy.deepcopy(best_data)
@@ -676,7 +708,7 @@ class Optimizer:
                     continue
                 _min, _max, _step = column_ranges[name]
                 assert _min < _max, 'Invalid min/max!'
-                if self.only_attribute or name in ('bed'):
+                if name in ('bed'):
                     # Check every possible value.
                     _value = _min
                     while _value <= _max:
@@ -690,7 +722,7 @@ class Optimizer:
                             new_query[name] = sum(column_values[name], Num(0.0)) / len(column_values[name])
                             _mean = copy.deepcopy(new_query[name])
 
-                        # Skip the hold case.
+                        # Skip the hold case. This will be handled below.
                         if _value == best_data.get(name, _mean):
                             logger.info('Hold case. Skipping.')
                             continue
@@ -734,11 +766,11 @@ class Optimizer:
             classifier.save(self.classifier_fn)
             logger.info('Classifier saved to %s.', self.classifier_fn)
 
-        # Score each query.
+        # Score each query. Note, each feature name should have at least two queries, the status quo and a change to a new value, possibly more.
         logger.info('=' * 80)
         total = len(queries)
         i = 0
-        final_recommendations = [] # [(predicted change, old score, new score, description, name)]
+        final_recommendations = [] # [(predicted change, predicted percent change, old score, new score, description, name)]
         final_scores = {} # {name: (best predicted change, description)}
         for name, description, query_data in queries:
             i += 1
@@ -759,14 +791,26 @@ class Optimizer:
             logger.info('\tdesc: %s', description)
             logger.info('\tpredictions: %s', predictions)
             if predictions:
-                score_change = predictions[0].predicted
-                logger.info('\tscore change: %.02f', score_change)
+                _actual = predictions[0].actual
+                _probability = predictions[0].probability
+                next_score = predictions[0].predicted
+                logger.info('\tnext score: %.02f', next_score)
             else:
                 logger.warning('No predictions found? Possible bug in data or predictor?')
-                score_change = 0
-            final_recommendations.append((score_change, 0, 0, description, name))
+                next_score = 0
+
+            print('-' * 80)
+            print('name:', name)
+            print('last_full_day_score:', last_full_day_score)
+            print('next_score:', next_score)
+            _score_change_raw = next_score - last_full_day_score
+            print('_score_change_raw:', _score_change_raw)
+            _score_change_percent = (next_score - last_full_day_score) / last_full_day_score # (new - old)/old
+            print('_score_change_percent:', _score_change_percent)
+
+            final_recommendations.append((_score_change_raw, _score_change_percent, last_full_day_score, next_score, description, name))
             final_scores.setdefault(name, (-1e999999999999, None))
-            final_scores[name] = max(final_scores[name], (score_change, description))
+            final_scores[name] = max(final_scores[name], (_score_change_raw, description))
 
         # Show top predictors.
         logger.info('=' * 80)
@@ -778,30 +822,22 @@ class Optimizer:
         # Show final top recommendations by attribute.
         print('=' * 80)
         print(f'recommendations by attribute based on date: {seed_date}')
-        final_recommendations.sort(key=lambda o: (o[4], o[0]))
-        i = 0
-        digits = len(str(len(final_recommendations)))
-        for change, _old_score, _new_score, description, name in final_recommendations:
-            i += 1
-            best_score_change, best_description = final_scores[name]
-            if description != best_description:
-                continue
-            print(('\t%0' + str(digits) + 'i %s => %.06f') % (i, description, change))
+        final_recommendations.sort(key=lambda o: (o[5], o[0])) # sort first by description (so holds will be grouped together), then score
 
         # Show final top recommendations by best change.
         final_recommendations.sort()
 
         print('=' * 80)
         print(f'Evening recommendations by change based on date: {seed_date}')
-        print_recommendation(final_recommendations, final_scores, typ=EV)
+        self.print_recommendation(final_recommendations, final_scores, typ=EV)
 
         print('=' * 80)
         print(f'Morning recommendations by change based on date: {seed_date}')
-        print_recommendation(final_recommendations, final_scores, typ=MN)
+        self.print_recommendation(final_recommendations, final_scores, typ=MN)
 
         print('=' * 80)
         print(f'Other recommendations by change based on date: {seed_date}')
-        print_recommendation(final_recommendations, final_scores, typ=OTHERS)
+        self.print_recommendation(final_recommendations, final_scores, typ=OTHERS)
 
         self.write_report(final_recommendations, final_scores)
 
@@ -817,54 +853,87 @@ class Optimizer:
                 'name',
                 'recommended action',
                 'recommended value',
+                'old score',
+                'new score',
                 'expected change',
+                'confidence', # 0=completely unconfidence, 0.5=equally unsure, 1.0=completely confident
+                'expected percent change',
+                'expected percent change zero',
+                'best value',
             ]
             writer = csv.DictWriter(fout, fieldnames=fieldnames)
             writer.writerow(dict(zip(fieldnames, fieldnames)))
-            for change, _old_score, _new_score, description, name in recommendations:
-                best_score_change, best_description = scores[name]
-                if description != best_description:
-                    continue
-                best_description = best_description.split(':')[-1].strip()
-                if ' at ' in best_description:
-                    best_action, best_value = best_description.split(' at ')
-                elif ' from ' in best_description:
-                    best_action, best_value = best_description.split(' from ')
+            for change, percent_change, _old_score, _new_score, description, name in recommendations:
+
+                # Skip all but the best.
+                if not self.show_all_options:
+                    best_score_change, best_description = scores[name]
+                    if description != best_description:
+                        logger.info('Skipping non-best recommendation for %s!', name)
+                        continue
+
+                description = description.split(':')[-1].strip()
+                if ' at ' in description:
+                    action, value_desc = description.split(' at ')
+                elif ' from ' in description:
+                    action, value_desc = description.split(' from ')
                 else:
-                    raise Exception(f'Invalid description: {best_description}')
+                    raise Exception(f'Invalid description: {description}')
+                value = value_desc.split('->')[-1]
+                percent_change_zero = max(min((percent_change + 1) / 2, 1), 0)
+                abs_expected_change_zero = max(min((abs(change) + 1) / 2, 1), 0)
                 writer.writerow({
                     'name': name,
-                    'recommended action': best_action,
-                    'recommended value': best_value,
-                    'expected change': round(change, 2),
+                    'recommended action': action,
+                    'recommended value': value_desc,
+                    'old score': round(_old_score, 4),
+                    'new score': round(_new_score, 4),
+                    'expected change': round(change, 4),
+                    'expected percent change': round(percent_change, 4),
+                    'expected percent change zero': round(percent_change_zero, 4),
+                    'confidence': round(abs_expected_change_zero, 4),
+                    'best value': value,
                 })
         logger.info('Wrote analysis report to %s.', fn)
 
+        fn = os.path.abspath(fn)
+        logger.info('Converting %s to ods.', fn)
+        _dir, _ = os.path.split(fn)
+        _run(f'cd {_dir}; soffice --convert-to ods {fn}')
+        logger.info('Converted %s to ods.', fn)
+        os.remove(fn)
 
-def print_recommendation(recs, scores, typ=None):
-    i = len(recs) + 1
-    digits = len(str(len(recs)))
-    for change, _old_score, _new_score, description, name in recs:
-        i -= 1
-        if typ:
-            if typ == EV and EV not in name:
-                continue
-            if typ == MN and MN not in name:
-                continue
-            if typ == OTHERS and (EV in name or MN in name):
-                continue
-        best_score_change, best_description = scores[name]
-        if description != best_description:
-            continue
-        print(('\t%0' + str(digits) + 'i %s => %.06f') % (i, description, change))
+    def print_recommendation(self, recs, scores, typ=None):
+        i = len(recs) + 1
+        digits = len(str(len(recs)))
+        for change, percent_change, _old_score, _new_score, description, name in recs:
+            i -= 1
+
+            # Filter by type, if specified.
+            if typ:
+                if typ == EV and EV not in name:
+                    continue
+                if typ == MN and MN not in name:
+                    continue
+                if typ == OTHERS and (EV in name or MN in name):
+                    continue
+
+            # Skip all but the best.
+            if not self.show_all_options:
+                best_score_change, best_description = scores[name]
+                if description != best_description:
+                    continue
+
+            print(('\t%0' + str(digits) + 'i %s => %.06f') % (i, description, change))
 
 
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='Analyzes daily routine features to optimize your routine.')
     parser.add_argument('fn', help='Filename of ODS file containing data.')
-    parser.add_argument('--only-attribute', default=None, help='If given, only predicts the effect of this one attribute. Otherwise looks at all attributes.')
+    parser.add_argument('--only-attributes', default=None, help='If given, only predicts the effect of this one attribute. Otherwise looks at all attributes.')
     parser.add_argument('--stop-on-error', action='store_true', default=False, help='If given, halts at first error. Otherwise shows a warning and continues.')
+    parser.add_argument('--show-all-options', action='store_true', default=False, help='If given, shows predictions for all tested options, not just the best.')
     parser.add_argument('--no-train', action='store_true', default=False, help='If given, skips training and re-uses last trained classifier.')
     parser.add_argument(
         '--score-field-name', default=None, help=f'The name of the field containing the score to maximize. Default is "{DEFAULT_SCORE_FIELD_NAME}".'
