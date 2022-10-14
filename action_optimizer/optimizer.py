@@ -857,8 +857,7 @@ class Optimizer:
                 'new score',
                 'expected change',
                 'confidence', # 0=completely unconfidence, 0.5=equally unsure, 1.0=completely confident
-                'expected percent change',
-                'expected percent change zero',
+                'confidence_inv', # Use when value is 0 and we're looking for confidence for non-zero.
                 'best value',
             ]
             writer = csv.DictWriter(fout, fieldnames=fieldnames)
@@ -880,7 +879,6 @@ class Optimizer:
                 else:
                     raise Exception(f'Invalid description: {description}')
                 value = value_desc.split('->')[-1]
-                percent_change_zero = max(min((percent_change + 1) / 2, 1), 0)
                 abs_expected_change_zero = max(min((abs(change) + 1) / 2, 1), 0)
                 writer.writerow({
                     'name': name,
@@ -889,9 +887,8 @@ class Optimizer:
                     'old score': round(_old_score, 4),
                     'new score': round(_new_score, 4),
                     'expected change': round(change, 4),
-                    'expected percent change': round(percent_change, 4),
-                    'expected percent change zero': round(percent_change_zero, 4),
                     'confidence': round(abs_expected_change_zero, 4),
+                    'confidence_inv': round(1 - abs_expected_change_zero, 4),
                     'best value': value,
                 })
         logger.info('Wrote analysis report to %s.', fn)
