@@ -85,6 +85,9 @@ DEFAULT_RELATION = '%s-training'
 
 BASE_REPORTS_DIR = './reports'
 
+ANALYZE = 'analyze'
+COMPARE = 'compare'
+
 
 def attempt_cast_str_to_numeric(value):
     try:
@@ -176,6 +179,9 @@ class Optimizer:
         assert os.path.isfile(fn), f'File {fn} does not exist.'
         self.fn = fn
 
+        # Data cache so we don't have to load from file every time.
+        self._data = None
+
         # Find the fully qualified absolute file path, minus the extension.
         self.fqfn_base = os.path.splitext(os.path.abspath(fn))[0]
 
@@ -183,6 +189,8 @@ class Optimizer:
         self.fn_base = os.path.splitext(os.path.split(fn)[-1])[0]
 
         self.__dict__.update(kwargs)
+
+        # Analyze parameters.
         self.score_field_name = self.__dict__.get('score_field_name') or DEFAULT_SCORE_FIELD_NAME
         self.only_attributes = [_.strip() for _ in (self.__dict__.get('only_attributes') or '').split(',') if _.strip()]
         self.stop_on_error = self.__dict__.get('stop_on_error') or False
@@ -194,6 +202,14 @@ class Optimizer:
         self.classifier_fn = self.__dict__.get('classifier_fn', DEFAULT_CLASSIFIER_FN) % self.fn_base
         self.relation = self.__dict__.get('relation', DEFAULT_RELATION) % self.fn_base
         self.show_all_options = self.__dict__.get('show_all_options') or False
+
+        # Compare parameters.
+        self._compare_date1 = self.__dict__.get('_compare_date1', None)
+        if self._compare_date1:
+            self._compare_date1 = parse(self._compare_date1).date()
+        self._compare_date2 = self.__dict__.get('_compare_date2', None)
+        if self._compare_date2:
+            self._compare_date2 = parse(self._compare_date2).date()
 
     def plot(self, x, y, name, show=False):
 
@@ -280,7 +296,70 @@ class Optimizer:
 
         return linear_error, gaussian_error, sigmoid_error, best_binned_value, best_binned_center, linear_best, gaussian_best, sigmoid_best
 
-    def analyze(self, save=True):
+    @property
+    def data(self):
+        if self._data is None:
+            self._data = get_data(self.fn)['data']
+        return self._data
+
+    def get_data(self):
+        return self.data[DATA_ROW_INDEX:]
+
+    def get_headers(self):
+        return self.data[HEADER_ROW_INDEX:][0]
+
+    def run(self):
+        """
+        Launches the command configured from the command line.
+        """
+        getattr(self, f'run_{self.command}')()
+
+    def run_compare(self):
+        """
+        Retrieves the most recent complete row and the row associated with the target date and lists all differences.
+        """
+        headers = self.get_headers()
+        data = self.get_data()
+
+        def has_blank(seq):
+            """
+            Returns true if sequence contains an empty string.
+            """
+            return '' in seq
+
+        date1 = self._compare_date1
+        row1 = None
+        assert date1, "No first date specified."
+        for row in data:
+            if row[0] == date1:
+                row1 = row
+                break
+        assert row1, f"Could not find row associated with first date {date1}."
+
+        date2 = self._compare_date2
+        row2 = None
+        if not date2:
+            # If no second date given, use the first date corresponding to non-blank row.
+            for row in data:
+                if not has_blank(row):
+                    date2 = row[0]
+                    row2 = row
+                    break
+        assert date2, "Could not find a second date to compare to."
+        if not row2:
+            for row in data:
+                if row[0] == date2:
+                    row2 = row
+                    break
+        assert row2, f"Could not find row associated with second date {date2}."
+
+        print(f'Name,Value on {date1},Value on {date2}')
+        for name, value1, value2 in zip(headers, row1, row2):
+            if value1 == value2:
+                continue
+            print(f'{name},{value1},{value2}')
+
+    def run_analyze(self, save=True):
         self.score_field_name = self.score_field_name or DEFAULT_SCORE_FIELD_NAME
 
         def isolate_attr(rows, attr):
@@ -927,29 +1006,46 @@ class Optimizer:
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='Analyzes daily routine features to optimize your routine.')
-    parser.add_argument('fn', help='Filename of ODS file containing data.')
-    parser.add_argument('--only-attributes', default=None, help='If given, only predicts the effect of this one attribute. Otherwise looks at all attributes.')
-    parser.add_argument('--stop-on-error', action='store_true', default=False, help='If given, halts at first error. Otherwise shows a warning and continues.')
-    parser.add_argument('--show-all-options', action='store_true', default=False, help='If given, shows predictions for all tested options, not just the best.')
-    parser.add_argument('--no-train', action='store_true', default=False, help='If given, skips training and re-uses last trained classifier.')
-    parser.add_argument(
+    subparsers = parser.add_subparsers(dest="command")
+
+    analyze_parser = subparsers.add_parser(ANALYZE)
+    analyze_parser.add_argument('fn', help='Filename of ODS file containing data.')
+    analyze_parser.add_argument(
+        '--only-attributes', default=None, help='If given, only predicts the effect of this one attribute. Otherwise looks at all attributes.'
+    )
+    analyze_parser.add_argument(
+        '--stop-on-error', action='store_true', default=False, help='If given, halts at first error. Otherwise shows a warning and continues.'
+    )
+    analyze_parser.add_argument(
+        '--show-all-options', action='store_true', default=False, help='If given, shows predictions for all tested options, not just the best.'
+    )
+    analyze_parser.add_argument('--no-train', action='store_true', default=False, help='If given, skips training and re-uses last trained classifier.')
+    analyze_parser.add_argument(
         '--score-field-name', default=None, help=f'The name of the field containing the score to maximize. Default is "{DEFAULT_SCORE_FIELD_NAME}".'
     )
-    parser.add_argument(
+    analyze_parser.add_argument(
         '--all-classifiers',
         action='store_true',
         default=False,
         help='If given, trains all classifiers, even the crappy ones. Otherwise, only uses the known best.'
     )
-    parser.add_argument(
+    analyze_parser.add_argument(
         '--calculate-pcc', action='store_true', default=False, help='If given, calculates the Pearson correlation coefficient for all attributes.'
     )
-    parser.add_argument(
+    analyze_parser.add_argument(
         '--plot-attributes',
         default='',
         help='Comma-delimited list of columns names to plot, where x-axis is the column value and y-axis is the score value mean.'
     )
-    parser.add_argument('--yes', default=None, action='store_true', help='Enables non-interactive mode and assumes yes for any interactive yes/no prompts.')
+    analyze_parser.add_argument(
+        '--yes', default=None, action='store_true', help='Enables non-interactive mode and assumes yes for any interactive yes/no prompts.'
+    )
+
+    compare_parser = subparsers.add_parser(COMPARE)
+    compare_parser.add_argument('fn', help='Filename of ODS file containing data.')
+    compare_parser.add_argument('--date1', default='', dest='_compare_date1', help='First date to compare.')
+    compare_parser.add_argument('--date2', default='', dest='_compare_date2', help='Second date to compare.')
+
     args = parser.parse_args()
     o = Optimizer(**args.__dict__)
-    o.analyze()
+    o.run()

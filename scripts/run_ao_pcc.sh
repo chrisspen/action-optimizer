@@ -13,4 +13,4 @@ cd $SCRIPT_DIR/..
 [ ! -d .env ] && ./init_virtualenv.sh
 
 echo "Calculating Pearson correlation coefficients..."
-.env/bin/python -m action_optimizer.optimizer $ACTION_OPTIMIZER_DATAFILE --calculate-pcc
+.env/bin/python -m action_optimizer.optimizer analyze $ACTION_OPTIMIZER_DATAFILE --calculate-pcc
