@@ -1,4 +1,4 @@
-![CI](https://github.com/chrisspen/action-optimizer/actions/workflows/ci.yml/badge.svg)
+[![CI](https://github.com/chrisspen/action-optimizer/actions/workflows/ci.yml/badge.svg)](https://github.com/chrisspen/action-optimizer/actions/)
 
 Action Optimizer
 ================
