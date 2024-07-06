@@ -1,3 +1,5 @@
+![CI](https://github.com/chrisspen/action-optimizer/actions/workflows/ci.yml/badge.svg)
+
 Action Optimizer
 ================
 
