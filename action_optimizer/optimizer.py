@@ -70,11 +70,16 @@ MIN_DAYS = 30
 HEADER_ROW_INDEX = 0
 TYPE_ROW_INDEX = 1
 RANGE_ROW_INDEX = 2
-# CONTROLLABLE_ROW_INDEX = 3
-LEARN_ROW_INDEX = 3 # These columns are given to the classifiers to learn.
-PREDICT_ROW_INDEX = 4 # These columns are individually looked at to predict an optimal change.
-CHANGE_ROW_INDEX = 5 # 0=none, 1=relative change recommendation, 2=absolute value recommendation
-DATA_ROW_INDEX = 6
+TAG_ROW_INDEX = 3
+RECOMMENDER_ROW_INDEX = 4
+RECOMMENDED_TIME_ROW_INDEX = 5
+PURPOSE_ROW_INDEX = 6
+LEARN_ROW_INDEX = 7 # These columns are given to the classifiers to learn.
+PREDICT_ROW_INDEX = 8 # These columns are individually looked at to predict an optimal change.
+CHANGE_ROW_INDEX = 9 # 0=none, 1=relative change recommendation, 2=absolute value recommendation
+
+DATA_ROW_INDEX = 10 # Row where data begins (i.e. after all the above headers)
+
 TOLERANCE = 1.0
 #CLASS_ATTR_NAME = 'score'
 #CLASS_ATTR_NAME = 'score_change'
@@ -168,6 +173,13 @@ def argmax(x, y):
             best = max(best, (_y, _x))
     best_y, best_x = best
     return best_x, best_y
+
+
+def has_blank(seq):
+    """
+    Returns true if sequence contains an empty string.
+    """
+    return '' in seq
 
 
 class Optimizer:
@@ -314,18 +326,25 @@ class Optimizer:
         """
         getattr(self, f'run_{self.command}')()
 
+    def get_first_nonblank_row(self, headers=False):
+        """
+        Returns the first complete data row.
+        """
+        print('Getting all data.')
+        data = self.get_data()
+        row = None
+        for i, row in enumerate(data, 1):
+            print(f'Checking for non-blank row {i}.')
+            if not has_blank(row):
+                headers = self.get_headers()
+                return dict(zip(headers, row))
+
     def run_compare(self):
         """
         Retrieves the most recent complete row and the row associated with the target date and lists all differences.
         """
         headers = self.get_headers()
         data = self.get_data()
-
-        def has_blank(seq):
-            """
-            Returns true if sequence contains an empty string.
-            """
-            return '' in seq
 
         date1 = self._compare_date1
         row1 = None
@@ -340,11 +359,8 @@ class Optimizer:
         row2 = None
         if not date2:
             # If no second date given, use the first date corresponding to non-blank row.
-            for row in data:
-                if not has_blank(row):
-                    date2 = row[0]
-                    row2 = row
-                    break
+            row2 = self.get_first_nonblank_row()
+            date2 = row2[0]
         assert date2, "Could not find a second date to compare to."
         if not row2:
             for row in data:
