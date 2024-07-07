@@ -24,7 +24,7 @@ class Tests(unittest.TestCase):
         """
         o = Optimizer(fn='fixtures/test-trend.ods', yes=True, stop_on_error=True)
 
-        final_recommendations, final_scores = o.analyze(save=False)
+        final_recommendations, final_scores = o.run_analyze(save=False)
         print('final_recommendations:')
         pprint(final_recommendations, indent=4)
         print('final_scores:')

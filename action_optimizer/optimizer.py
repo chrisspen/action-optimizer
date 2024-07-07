@@ -73,12 +73,13 @@ RANGE_ROW_INDEX = 2
 TAG_ROW_INDEX = 3
 RECOMMENDER_ROW_INDEX = 4
 RECOMMENDED_TIME_ROW_INDEX = 5
-PURPOSE_ROW_INDEX = 6
-LEARN_ROW_INDEX = 7 # These columns are given to the classifiers to learn.
-PREDICT_ROW_INDEX = 8 # These columns are individually looked at to predict an optimal change.
-CHANGE_ROW_INDEX = 9 # 0=none, 1=relative change recommendation, 2=absolute value recommendation
+RECOMMENDED_DOSE_ROW_INDEX = 6
+PURPOSE_ROW_INDEX = 7
+LEARN_ROW_INDEX = 8 # These columns are given to the classifiers to learn.
+PREDICT_ROW_INDEX = 9 # These columns are individually looked at to predict an optimal change.
+CHANGE_ROW_INDEX = 10 # 0=none, 1=relative change recommendation, 2=absolute value recommendation
 
-DATA_ROW_INDEX = 10 # Row where data begins (i.e. after all the above headers)
+DATA_ROW_INDEX = 11 # Row where data begins (i.e. after all the above headers)
 
 TOLERANCE = 1.0
 #CLASS_ATTR_NAME = 'score'
