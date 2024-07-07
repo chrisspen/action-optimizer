@@ -24,6 +24,12 @@ dt = date.today()
 if len(sys.argv) > 1:
     dt = sys.argv[1]
 
+MAX_HEADER_SIZE = {
+    'rec_value': 3,
+    'rec_change': 1,
+    'human_conf': 0,
+}
+
 
 def auto_size_and_fix_columns(input_ods, postfix=None):
     # Generate the output_xlsx filename
@@ -40,6 +46,9 @@ def auto_size_and_fix_columns(input_ods, postfix=None):
     wb = load_workbook(output_xlsx)
     ws = wb.active
 
+    # Freeze the top header row
+    ws.freeze_panes = ws['B2']
+
     # Apply bold formatting to the header row
     for cell in ws[1]:
         cell.font = Font(bold=True)
@@ -48,9 +57,12 @@ def auto_size_and_fix_columns(input_ods, postfix=None):
     for col in ws.columns:
         max_length = 0
         column = col[0].column_letter
-        for cell in col:
+        for i, cell in enumerate(col):
+            if not i and cell.value.strip() in MAX_HEADER_SIZE:
+                max_length = MAX_HEADER_SIZE[cell.value.strip()] + len(str(cell.value))
+                break
             max_length = max(max_length, len(str(cell.value)))
-        adjusted_width = (max_length + 2)
+        adjusted_width = (max_length + 1) # buffer
         ws.column_dimensions[column].width = adjusted_width
 
     # Save the changes to the Excel file
@@ -62,7 +74,10 @@ def combine():
     datafile = os.environ.get('ACTION_OPTIMIZER_DATAFILE')
     print(f'Loading data file: {datafile}')
     optimizer = Optimizer(datafile)
+    print('Getting first non-blank row.')
     last_data = optimizer.get_first_nonblank_row(headers=True)
+    print('last_data:', last_data)
+    assert last_data, 'Unable to find last non-blank row?!'
 
     pcc_path = os.path.abspath(f'{current_path}/../reports/{dt}/pcc.ods')
     print(f'Using PCC path: {pcc_path}')
@@ -115,16 +130,25 @@ def combine():
     print(f'Saving {combine_fn}.')
     data = OrderedDict()
     rows = []
+    pcc_value = 0
+    ens_value = 0
+    rec_change = 0
+    last_value = 0
     for i, (conf, name) in enumerate(final_values, 2):
         pcc_conf = pcc_confidences.get(name, 0.5)
         ens_conf = ens_confidences.get(name, 0.5)
         algo_conf = (pcc_conf + ens_conf) / 2
-        rec_change = 0
         if name in last_data:
-            rec_change = bool(last_data[name]) != bool(round(algo_conf))
-        rows.append([name, conf, pcc_conf, ens_conf, 0.5, f'=(C{i}+D{i}+E{i})/3', pcc_values.get(name, ''), ens_values.get(name, ''), rec_change])
+            pcc_value = pcc_values.get(name, '')
+            ens_value = ens_values.get(name, '')
+            last_value = last_data[name]
+            should_take = bool(round(algo_conf))
+        rows.append([
+            name, conf, pcc_conf, ens_conf, 0.5, f'=(C{i}+D{i}+E{i})/3', algo_conf, last_value, pcc_value, ens_value, f'=IF(C{i}>D{i}, I{i}, J{i})',
+            f'=IF(IF(B{i}>0.5, IF(C{i}>D{i}, I{i}, J{i})<>H{i}, H{i}<>0), TRUE, FALSE)'
+        ])
     data.update({"Sheet 1": [
-        ['name', 'score', 'pcc_conf', 'ens_conf', 'human_conf', 'agg_conf', 'pcc_value', 'ens_value', 'recommend_change']] + \
+        ['name', 'score', 'pcc_conf', 'ens_conf', 'human_conf', 'agg_conf', 'algo_conf', 'last_value', 'pcc_value', 'ens_value', 'rec_value', 'rec_change']] + \
         rows
                  })
     save_data(combine_fn, data)
