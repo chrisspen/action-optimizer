@@ -9,7 +9,7 @@ from pyexcel_ods import save_data
 from pandas_ods_reader import read_ods
 import pandas as pd
 from openpyxl import load_workbook
-from openpyxl.styles import Font
+from openpyxl.styles import Font, NamedStyle
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.worksheet.dimensions import ColumnDimension
 
@@ -53,6 +53,16 @@ def auto_size_and_fix_columns(input_ods, postfix=None):
     for cell in ws[1]:
         cell.font = Font(bold=True)
 
+    # Define a boolean style
+    bool_style = NamedStyle(name="bool_style", number_format='BOOLEAN')
+    if "bool_style" not in wb.named_styles:
+        wb.add_named_style(bool_style)
+    rec_change_col = None
+    for cell in ws[1]:
+        if cell.value == "rec_change":
+            rec_change_col = cell.column_letter
+            break
+
     # Auto-size the columns
     for col in ws.columns:
         max_length = 0
@@ -65,7 +75,12 @@ def auto_size_and_fix_columns(input_ods, postfix=None):
         adjusted_width = (max_length + 1) # buffer
         ws.column_dimensions[column].width = adjusted_width
 
-    # Save the changes to the Excel file
+    # Apply the boolean style to the "rec_change" column
+    if rec_change_col:
+        for cell in ws[rec_change_col]:
+            if cell.row != 1: # Skip the header
+                cell.style = bool_style
+
     wb.save(output_xlsx)
 
 
