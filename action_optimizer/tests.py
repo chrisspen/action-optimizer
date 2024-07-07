@@ -165,7 +165,7 @@ class Tests(unittest.TestCase):
 
     def test_gaussian_bed_data(self):
         import numpy as np
-        d = np.loadtxt('action_optimizer/fixtures/bed-values.csv', delimiter=',')
+        d = np.loadtxt(os.path.join(os.path.dirname(__file__), 'fixtures', 'bed-values.csv'), delimiter=',')
         x = d[:, 0]
         print('x:', x)
         y = d[:, 1]
