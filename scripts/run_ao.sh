@@ -12,6 +12,6 @@ cd $SCRIPT_DIR/..
 
 [ ! -d .env ] && ./init_virtualenv.sh
 
-.env/bin/python -m action_optimizer.optimizer analyze $ACTION_OPTIMIZER_DATAFILE --stop-on-error
-exit_code=$?
+exit_code=0
+.env/bin/python -m action_optimizer.optimizer analyze $ACTION_OPTIMIZER_DATAFILE --stop-on-error || exit_code=$?
 exit $exit_code
