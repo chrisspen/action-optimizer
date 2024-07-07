@@ -12,7 +12,11 @@ cd $SCRIPT_DIR/..
 
 [ ! -d .env ] && ./init_virtualenv.sh
 
+cd $SCRIPT_DIR
+
 ./run_ao.sh &
 ./run_ao_pcc.sh &
 wait
+
+cd $SCRIPT_DIR
 ./combine_reports.py

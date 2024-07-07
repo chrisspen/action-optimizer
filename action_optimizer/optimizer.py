@@ -334,8 +334,8 @@ class Optimizer:
         print('Getting all data.')
         data = self.get_data()
         row = None
+        print('Checking for non-blank row.')
         for i, row in enumerate(data, 1):
-            print(f'Checking for non-blank row {i}.')
             if not has_blank(row):
                 headers = self.get_headers()
                 return dict(zip(headers, row))

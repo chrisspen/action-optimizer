@@ -14,3 +14,5 @@ cd $SCRIPT_DIR/..
 
 echo "Calculating Pearson correlation coefficients..."
 .env/bin/python -m action_optimizer.optimizer analyze $ACTION_OPTIMIZER_DATAFILE --calculate-pcc
+exit_code=$?
+exit $exit_code
