@@ -957,7 +957,7 @@ class Optimizer:
         tags = set(self.tags)
         print('Name,Value')
         for name in sorted(headers):
-            if header_tags[name] not in tags:
+            if header_tags[name] not in tags or 'monthly' in name or name[:2] not in ('ev', 'mn'):
                 continue
             if row[name]:
                 print(f'{name},{row[name]}')
