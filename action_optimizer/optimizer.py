@@ -70,7 +70,7 @@ MIN_DAYS = 30
 HEADER_ROW_INDEX = 0
 TYPE_ROW_INDEX = 1
 RANGE_ROW_INDEX = 2
-TAG_ROW_INDEX = 3
+TAGS_ROW_INDEX = 3
 RECOMMENDER_ROW_INDEX = 4
 RECOMMENDED_TIME_ROW_INDEX = 5
 RECOMMENDED_DOSE_ROW_INDEX = 6
@@ -93,6 +93,7 @@ BASE_REPORTS_DIR = './reports'
 
 ANALYZE = 'analyze'
 COMPARE = 'compare'
+LIST = 'list'
 
 
 def attempt_cast_str_to_numeric(value):
@@ -224,6 +225,9 @@ class Optimizer:
         if self._compare_date2:
             self._compare_date2 = parse(self._compare_date2).date()
 
+        # List parameters.
+        self.tags = (self.__dict__.get('tags') or '').strip().split(',')
+
     def plot(self, x, y, name, show=False):
 
         logger.info('Plotting functional estimates for %s.', name)
@@ -320,6 +324,9 @@ class Optimizer:
 
     def get_headers(self):
         return self.data[HEADER_ROW_INDEX:][0]
+
+    def get_tags(self):
+        return self.data[TAGS_ROW_INDEX:][0]
 
     def run(self):
         """
@@ -939,6 +946,21 @@ class Optimizer:
 
         return final_recommendations, final_scores
 
+    def run_list(self):
+        """
+        Lists values from a row.
+        """
+        headers = self.get_headers()
+        tags = self.get_tags()
+        header_tags = dict(zip(headers, tags))
+        row = self.get_first_nonblank_row()
+        tags = set(self.tags)
+        print('Name,Value')
+        for name in sorted(headers):
+            if header_tags[name] not in tags:
+                continue
+            print(f'{name},{row[name]}')
+
     def write_report(self, recommendations, scores):
         report_dir = os.path.join(BASE_REPORTS_DIR, str(date.today()))
         os.makedirs(report_dir, exist_ok=True)
@@ -1063,6 +1085,11 @@ if __name__ == '__main__':
     compare_parser.add_argument('--date1', default='', dest='_compare_date1', help='First date to compare.')
     compare_parser.add_argument('--date2', default='', dest='_compare_date2', help='Second date to compare.')
 
+    list_parser = subparsers.add_parser(LIST)
+    list_parser.add_argument('fn', help='Filename of ODS file containing data.')
+    list_parser.add_argument('--tags', type=str, help='Comma-separated list of tags to filter by.')
+
     args = parser.parse_args()
+    print('args.__dict__:', args.__dict__)
     o = Optimizer(**args.__dict__)
     o.run()
