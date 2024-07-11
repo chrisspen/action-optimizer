@@ -959,7 +959,8 @@ class Optimizer:
         for name in sorted(headers):
             if header_tags[name] not in tags:
                 continue
-            print(f'{name},{row[name]}')
+            if row[name]:
+                print(f'{name},{row[name]}')
 
     def write_report(self, recommendations, scores):
         report_dir = os.path.join(BASE_REPORTS_DIR, str(date.today()))
