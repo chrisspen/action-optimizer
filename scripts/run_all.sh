@@ -12,6 +12,8 @@ cd $SCRIPT_DIR/..
 
 [ ! -d .env ] && ./init_virtualenv.sh
 
+. .env/bin/activate
+
 cd $SCRIPT_DIR
 
 ./run_ao.sh &
