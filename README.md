@@ -16,6 +16,10 @@ Usage
     [ ! -d .env ] && ./init_virtualenv.sh
     .env/bin/python -m action_optimizer.optimizer path/to/spreadsheet.ods
 
+Update functions:
+
+    .env/bin/python -m action_optimizer.optimizer func $ACTION_OPTIMIZER_DATAFILE
+
 Development
 -----------
 

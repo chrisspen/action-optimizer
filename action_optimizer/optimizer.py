@@ -9,12 +9,14 @@ import csv
 import random
 import math
 import logging
+import pickle
 from datetime import date, timedelta
 from pprint import pprint
 from decimal import Decimal
 from collections import defaultdict
 from subprocess import getstatusoutput
 
+import yaml
 import numpy as np
 from numpy import exp
 import matplotlib.pyplot as plt
@@ -94,6 +96,16 @@ BASE_REPORTS_DIR = './reports'
 ANALYZE = 'analyze'
 COMPARE = 'compare'
 LIST = 'list'
+FUNC = 'func'
+
+
+def get_column_letter(index):
+    """Returns Excel-style column letters for a given 0-based index."""
+    column = ""
+    while index >= 0:
+        column = chr(index % 26 + ord('A')) + column
+        index = index // 26 - 1
+    return column
 
 
 def attempt_cast_str_to_numeric(value):
@@ -322,11 +334,64 @@ class Optimizer:
     def get_data(self):
         return self.data[DATA_ROW_INDEX:]
 
+    def _init_cache(self, name):
+        """
+        Initializes and returns the path for a cache file.
+        Also checks if the cache is up-to-date compared to the data file.
+
+        Parameters:
+        - name: The name of the cache file (e.g., 'headers', 'tags').
+
+        Returns:
+        - cache_file_path: Path to the cache file.
+        - use_cache: Boolean indicating if the cache file is valid.
+        """
+        cache_dir = os.path.join(BASE_DIR, '../.cache')
+        os.makedirs(cache_dir, exist_ok=True)
+        cache_file_path = os.path.join(cache_dir, f'{name}.pkl')
+
+        # Determine if we can use the cache
+        use_cache = False
+        if os.path.exists(cache_file_path):
+            cache_mtime = os.path.getmtime(cache_file_path)
+            data_mtime = os.path.getmtime(self.fn)
+            use_cache = cache_mtime > data_mtime
+
+        return cache_file_path, use_cache
+
+    def _get_header_row(self, name, index):
+        """
+        Retrieves the headers from a cached file if up-to-date; otherwise reads from data and refreshes cache.
+        """
+        cache_file, use_cache = self._init_cache(name)
+
+        if use_cache:
+            with open(cache_file, 'rb') as f:
+                return pickle.load(f)
+
+        # Otherwise, load from data and refresh cache
+        row = self.data[index]
+        with open(cache_file, 'wb') as f:
+            pickle.dump(row, f)
+        return row
+
     def get_headers(self):
-        return self.data[HEADER_ROW_INDEX:][0]
+        """
+        Retrieves the headers from a cached file if up-to-date; otherwise reads from data and refreshes cache.
+        """
+        return self._get_header_row('headers', HEADER_ROW_INDEX)
 
     def get_tags(self):
-        return self.data[TAGS_ROW_INDEX:][0]
+        """
+        Retrieves the tags from a cached file if up-to-date; otherwise reads from data and refreshes cache.
+        """
+        return self._get_header_row('tags', TAGS_ROW_INDEX)
+
+    def get_purpose(self):
+        """
+        Retrieves the tags from a cached file if up-to-date; otherwise reads from data and refreshes cache.
+        """
+        return self._get_header_row('purpose', PURPOSE_ROW_INDEX)
 
     def run(self):
         """
@@ -962,6 +1027,71 @@ class Optimizer:
             if row[name]:
                 print(f'{name},{row[name]}')
 
+    def run_func(self):
+        """
+        Calculates functions.
+        """
+        with open('functions.yml', encoding='utf8') as fin:
+            function_definitions = yaml.safe_load(fin)
+
+        logger.info('Loading headers.')
+        headers = self.get_headers()
+        tags = self.get_tags()
+        purposes = self.get_purpose()
+
+        def get_column_index_from_name(name):
+            index = headers.index(name)
+            return get_column_letter(index)
+
+        class Column:
+
+            def __init__(self, name, index, purpose, tags):
+                self.name = name
+                self.index = index
+                self.purpose = purpose
+                self.tags = tags
+                self.cnt = 12
+
+            @property
+            def letter(self):
+                return get_column_letter(self.index)
+
+        class Columns:
+
+            def containing(self, purpose=None, name__startswith=None, tag=None):
+                for index, header in enumerate(headers):
+
+                    # Filter by name.
+                    if name__startswith and not header.startswith(name__startswith):
+                        continue
+
+                    # Filter by  purpose.
+                    _purpose = ''
+                    try:
+                        _purpose = purposes[index]
+                    except IndexError:
+                        pass
+                    if purpose and _purpose != purpose:
+                        continue
+
+                    # Filter by tags.
+                    _tag = ''
+                    try:
+                        _tag = tags[index]
+                    except IndexError:
+                        pass
+                    if tag and _tag != tag:
+                        continue
+
+                    yield Column(header, index, _purpose, _tag)
+
+        columns = Columns()
+        cnt = 12
+        for name, equation in function_definitions.items():
+            logger.info('Calculating %s.', name)
+            equation_value = eval(f"f'''{equation}'''")
+            print(f'{name}: {equation_value}')
+
     def write_report(self, recommendations, scores):
         report_dir = os.path.join(BASE_REPORTS_DIR, str(date.today()))
         os.makedirs(report_dir, exist_ok=True)
@@ -1090,7 +1220,10 @@ if __name__ == '__main__':
     list_parser.add_argument('fn', help='Filename of ODS file containing data.')
     list_parser.add_argument('--tags', type=str, help='Comma-separated list of tags to filter by.')
 
+    func_parser = subparsers.add_parser(FUNC)
+    func_parser.add_argument('fn', help='Filename of ODS file containing data.')
+    # func_parser.add_argument('--tags', type=str, help='Comma-separated list of tags to filter by.')
+
     args = parser.parse_args()
-    print('args.__dict__:', args.__dict__)
     o = Optimizer(**args.__dict__)
     o.run()

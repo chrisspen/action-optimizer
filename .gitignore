@@ -111,3 +111,5 @@ venv.bak/
 
 reports/*
 .aider*
+/cache
+functions.yml

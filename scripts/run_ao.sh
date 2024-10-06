@@ -15,3 +15,4 @@ cd $SCRIPT_DIR/..
 exit_code=0
 .env/bin/python -m action_optimizer.optimizer analyze $ACTION_OPTIMIZER_DATAFILE --stop-on-error || exit_code=$?
 exit $exit_code
+# Outputs ensemble.ods.

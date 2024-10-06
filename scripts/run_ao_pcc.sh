@@ -16,3 +16,4 @@ echo "Calculating Pearson correlation coefficients..."
 exit_code=0
 .env/bin/python -m action_optimizer.optimizer analyze $ACTION_OPTIMIZER_DATAFILE --calculate-pcc || exit_code=$?
 exit $exit_code
+# Outputs pcc.ods.
