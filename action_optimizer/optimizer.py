@@ -401,16 +401,27 @@ class Optimizer:
 
     def get_first_nonblank_row(self, headers=False):
         """
-        Returns the first complete data row.
+        Returns the first complete data row and caches the result for 1 day.
         """
-        print('Getting all data.')
+        cache_file, use_cache = self._init_cache('first_nonblank_row')
+
+        if use_cache:
+            with open(cache_file, 'rb') as f:
+                cached_data = pickle.load(f)
+                return cached_data
+
+        logger.info('Getting all data.')
         data = self.get_data()
-        row = None
-        print('Checking for non-blank row.')
+        logger.info('Checking for non-blank row.')
         for i, row in enumerate(data, 1):
             if not has_blank(row):
                 headers = self.get_headers()
-                return dict(zip(headers, row))
+                result = dict(zip(headers, row))
+
+                with open(cache_file, 'wb') as f:
+                    pickle.dump(result, f)
+
+                return result
 
     def run_compare(self):
         """
@@ -1019,12 +1030,24 @@ class Optimizer:
         tags = self.get_tags()
         header_tags = dict(zip(headers, tags))
         row = self.get_first_nonblank_row()
-        tags = set(self.tags)
+
+        include_tags = set(self.tags)
+        exclude_substrings = [s.strip() for s in self.__dict__.get('excludes', '').split(',') if s.strip()]
+
         print('Name,Value')
+
         for name in sorted(headers):
-            if header_tags[name] not in tags or 'monthly' in name or name[:2] not in ('ev', 'mn'):
+            tags = set(header_tags.get(name, '').split(','))
+
+            # Skip if tag doesn't match any of the requested ones
+            if include_tags and not include_tags.intersection(tags):
                 continue
-            if row[name]:
+
+            # Skip if tag contains any excluded substrings
+            if exclude_substrings and any(excl in name for excl in exclude_substrings):
+                continue
+
+            if row.get(name):
                 print(f'{name},{row[name]}')
 
     def run_func(self):
@@ -1219,6 +1242,9 @@ if __name__ == '__main__':
     list_parser = subparsers.add_parser(LIST)
     list_parser.add_argument('fn', help='Filename of ODS file containing data.')
     list_parser.add_argument('--tags', type=str, help='Comma-separated list of tags to filter by.')
+    list_parser.add_argument(
+        '--excludes', type=str, default='', help='Comma-separated list of substrings; if any appear in a tag, the column will be excluded.'
+    )
 
     func_parser = subparsers.add_parser(FUNC)
     func_parser.add_argument('fn', help='Filename of ODS file containing data.')

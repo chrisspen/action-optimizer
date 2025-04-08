@@ -20,6 +20,10 @@ Update functions:
 
     .env/bin/python -m action_optimizer.optimizer func $ACTION_OPTIMIZER_DATAFILE
 
+Show all supps:
+
+    ./list_supps.sh
+
 Development
 -----------
 
