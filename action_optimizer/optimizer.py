@@ -1030,12 +1030,13 @@ class Optimizer:
         tags = self.get_tags()
         header_tags = dict(zip(headers, tags))
         row = self.get_first_nonblank_row()
+        assert row, "No non-blank row found?! Check for new columns that have not been filled in yet?"
 
         include_tags = set(self.tags)
         exclude_substrings = [s.strip() for s in self.__dict__.get('excludes', '').split(',') if s.strip()]
 
         print('Name,Value')
-
+        found_good = False
         for name in sorted(headers):
             tags = set(header_tags.get(name, '').split(','))
 
@@ -1048,7 +1049,10 @@ class Optimizer:
                 continue
 
             if row.get(name):
+                found_good = True
                 print(f'{name},{row[name]}')
+
+        assert found_good, "No attributes found?!"
 
     def run_func(self):
         """

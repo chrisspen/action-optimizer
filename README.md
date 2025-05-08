@@ -18,7 +18,7 @@ Usage
 
 Update functions:
 
-    .env/bin/python -m action_optimizer.optimizer func $ACTION_OPTIMIZER_DATAFILE
+    ./list_funcs.sh
 
 Show all supps:
 
