@@ -399,9 +399,42 @@ class Optimizer:
         """
         getattr(self, f'run_{self.command}')()
 
-    def get_first_nonblank_row(self, headers=False):
+    def validate_headers(self):
+        """
+        Initializes and validates column_learnables and column_predictables from header data.
+        """
+        headers = self.get_headers()
+
+        # Initialize column_learnables if not already set
+        if not hasattr(self, 'column_learnables'):
+            self.column_learnables = {name: 0 for name in headers}
+            try:
+                learn_row = self.data[LEARN_ROW_INDEX]
+                for name, value in zip(headers, learn_row):
+                    try:
+                        self.column_learnables[name] = int(value)
+                    except (ValueError, TypeError):
+                        self.column_learnables[name] = 0
+            except IndexError:
+                logger.warning("Learn row not found in data, defaulting column_learnables to 0.")
+
+        # Initialize column_predictables if not already set
+        if not hasattr(self, 'column_predictables'):
+            self.column_predictables = {name: 0 for name in headers}
+            try:
+                predict_row = self.data[PREDICT_ROW_INDEX]
+                for name, value in zip(headers, predict_row):
+                    try:
+                        self.column_predictables[name] = int(value)
+                    except (ValueError, TypeError):
+                        self.column_predictables[name] = 0
+            except IndexError:
+                logger.warning("Predict row not found in data, defaulting column_predictables to 0.")
+
+    def get_first_nonblank_row(self, headers=False, learn=None, predict=None):
         """
         Returns the first complete data row and caches the result for 1 day.
+        Filters columns based on learn and predict parameters if provided.
         """
         cache_file, use_cache = self._init_cache('first_nonblank_row')
 
@@ -413,10 +446,42 @@ class Optimizer:
         logger.info('Getting all data.')
         data = self.get_data()
         logger.info('Checking for non-blank row.')
+        headers = self.get_headers()
+
+        # Ensure column_learnables and column_predictables are initialized
+        self.validate_headers()
+
+        # Convert boolean learn/predict to integer (True=1, False=0)
+        if learn is not None and isinstance(learn, bool):
+            learn = int(learn)
+        if predict is not None and isinstance(predict, bool):
+            predict = int(predict)
+
         for i, row in enumerate(data, 1):
-            if not has_blank(row):
-                headers = self.get_headers()
-                result = dict(zip(headers, row))
+            if not row:
+                continue
+
+            # Create a filtered row based on learn and predict constraints
+            filtered_row = {}
+            is_valid_row = True
+            for name, value in zip(headers, row):
+                # Skip if learn is specified and column doesn't match
+                if learn is not None and name in self.column_learnables:
+                    if self.column_learnables[name] != learn:
+                        continue
+
+                # Skip if predict is specified and column doesn't match
+                if predict is not None and name in self.column_predictables:
+                    if self.column_predictables[name] != predict:
+                        continue
+
+                filtered_row[name] = value
+                if value == '':
+                    is_valid_row = False
+                    break
+
+            if is_valid_row and filtered_row:
+                result = dict(zip(headers, row)) if headers else filtered_row
 
                 with open(cache_file, 'wb') as f:
                     pickle.dump(result, f)
@@ -1029,7 +1094,7 @@ class Optimizer:
         headers = self.get_headers()
         tags = self.get_tags()
         header_tags = dict(zip(headers, tags))
-        row = self.get_first_nonblank_row()
+        row = self.get_first_nonblank_row(learn=1)
         assert row, "No non-blank row found?! Check for new columns that have not been filled in yet?"
 
         include_tags = set(self.tags)
