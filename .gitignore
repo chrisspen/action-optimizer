@@ -113,3 +113,4 @@ reports/*
 .aider*
 /cache
 functions.yml
+repomix-output.md
