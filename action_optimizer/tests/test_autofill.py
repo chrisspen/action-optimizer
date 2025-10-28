@@ -53,3 +53,9 @@ class Tests(unittest.TestCase):
         # Clean up files
         input_path.unlink()
         output_path.unlink()
+
+    def test_autofill_sample(self):
+        pass
+        #TODO:run autofill_ods() on fixtures/supplements-sample.ods, output to /tmp/output.ods
+        #TODO:read /tmp/output.ods and get values of columns H, I, and J on row 13
+        #TODO:confirm H13 == 50, I13==0, and J13==20
