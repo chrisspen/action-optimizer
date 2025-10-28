@@ -16,7 +16,8 @@ class Tests(unittest.TestCase):
         """
         # 1. Create minimal ODS
         doc = ezodf.newdoc(doctype="ods")
-        sheet = doc.sheets[0]
+        sheet = ezodf.Table("Sheet1", size=(32, 8))
+        doc.sheets += sheet
 
         # Header row (0)
         sheet[0, 0].set_value("Date")
@@ -33,7 +34,7 @@ class Tests(unittest.TestCase):
         # Save to temp file
         with tempfile.NamedTemporaryFile(suffix=".ods", delete=False) as tmp:
             doc.saveas(tmp.name)
-        input_path = Path(tmp.name)
+            input_path = Path(tmp.name)
 
         # 2. Run autofill
         output_path = input_path.with_stem(input_path.stem + "_autofilled")
@@ -51,5 +52,5 @@ class Tests(unittest.TestCase):
         self.assertEqual(result_sheet[12, 1].value, 42)
 
         # Clean up files
-        input_path.unlink()
-        output_path.unlink()
+        input_path.unlink(missing_ok=True)
+        output_path.unlink(missing_ok=True)
