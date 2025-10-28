@@ -42,21 +42,47 @@ def read_defaults_row(sheet, default_row_idx):
         "text": "urn:oasis:names:tc:opendocument:xmlns:text:1.0",
     }
 
-    row_node = sheet.xmlnode.find(f".//{{*}}table-row[{default_row_idx + 1}]", namespaces=ns) # xpath is 1-based
+    # Expand table rows to locate the logical row index, accounting for repeated rows.
+    row_node = None
+    logical_row = 0
+    for candidate in sheet.xmlnode.findall("./{*}table-row", namespaces=ns):
+        repeat = int(
+            candidate.get(
+                "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}number-rows-repeated",
+                "1",
+            )
+        )
+        if logical_row + repeat > default_row_idx:
+            row_node = candidate
+            break
+        logical_row += repeat
+    if row_node is None:
+        raise ValueError(f"Could not locate XML row for index {default_row_idx}")
 
     defaults = []
-    for cell in row_node.iterfind("./{*}table-cell", namespaces=ns):
-        repeat = int(cell.get(
-            "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}number-columns-repeated",
-            "1",
-        ))
-        # value can be in office:value, office:string-value or text:p
-        value = (
-            cell.get("{urn:oasis:names:tc:opendocument:xmlns:office:1.0}value") or cell.get("{urn:oasis:names:tc:opendocument:xmlns:office:1.0}string-value")
-            or next((p.text for p in cell.iterfind("./{*}p", namespaces=ns)), None)
+    for cell in row_node:
+        tag = etree.QName(cell).localname
+        if tag not in {"table-cell", "covered-table-cell"}:
+            continue
+
+        repeat = int(
+            cell.get(
+                "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}number-columns-repeated",
+                "1",
+            )
         )
-        if value is not None:
-            value = value.strip() or None
+
+        if tag == "covered-table-cell":
+            value = None
+        else:
+            value = (
+                cell.get("{urn:oasis:names:tc:opendocument:xmlns:office:1.0}value")
+                or cell.get("{urn:oasis:names:tc:opendocument:xmlns:office:1.0}string-value")
+                or next((p.text for p in cell.iterfind("./{*}p", namespaces=ns)), None)
+            )
+            if value is not None:
+                value = value.strip() or None
+
         defaults.extend([value] * repeat)
 
     # Pad to the real column count (ezodf may report more columns than stored)

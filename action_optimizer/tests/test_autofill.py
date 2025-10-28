@@ -105,3 +105,93 @@ class Tests(unittest.TestCase):
             self.assertEqual(j_value, 20.0)
         finally:
             output_path.unlink(missing_ok=True)
+
+    def test_autofill_with_repeated_rows(self):
+        """
+        Ensure default extraction works even when header rows rely on row repetition.
+        """
+        doc = ezodf.newdoc(doctype="ods")
+        sheet = ezodf.Table("Sheet1", size=(40, 5))
+        doc.sheets += sheet
+
+        # Header row
+        headers = ["key", "metric", "amount", "note", "extra"]
+        for idx, name in enumerate(headers):
+            sheet[0, idx].set_value(name)
+
+        # Meta row that should remain untouched
+        sheet[1, 0].set_value("meta-key")
+        sheet[1, 1].set_value("meta-value")
+
+        # Create a block of repeated blank rows (simulates wide sheet metadata spacing)
+        blank_row_node = sheet.xmlnode.findall(
+            "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}table-row"
+        )[2]
+        blank_row_node.set(
+            "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}number-rows-repeated", "8"
+        )
+
+        # Default row positioned after the repeated block
+        default_idx = 12
+        sheet[default_idx, 0].set_value("default")
+        sheet[default_idx, 1].set_value("last")
+        sheet[default_idx, 2].set_value("5")
+
+        # First populated data row further down
+        data_idx = 20
+        sheet[data_idx, 1].set_value(42)
+        sheet[data_idx, 2].set_value(7)
+
+        with tempfile.NamedTemporaryFile(suffix=".ods", delete=False) as tmp_in:
+            doc.saveas(tmp_in.name)
+            input_path = Path(tmp_in.name)
+
+        output_path = input_path.with_stem(input_path.stem + "_autofilled")
+
+        try:
+            baseline_doc = ezodf.opendoc(str(input_path))
+            baseline_sheet = baseline_doc.sheets[0]
+            default_row = None
+            first_data_row = None
+            for idx in range(baseline_sheet.nrows()):
+                cell_value = baseline_sheet[idx, 0].value
+                if (
+                    default_row is None
+                    and cell_value is not None
+                    and str(cell_value).strip().lower() == "default"
+                ):
+                    default_row = idx
+                metric_value = baseline_sheet[idx, 1].value
+                if (
+                    default_row is not None
+                    and first_data_row is None
+                    and metric_value not in (None, "", " ")
+                    and idx > default_row
+                ):
+                    first_data_row = idx
+                    break
+            self.assertIsNotNone(default_row)
+            self.assertIsNotNone(first_data_row)
+
+            autofill_ods(input_path, output_path)
+
+            result_doc = ezodf.opendoc(str(output_path))
+            result_sheet = result_doc.sheets[0]
+
+            # Meta header row should be unchanged
+            self.assertEqual(result_sheet[1, 0].value, "meta-key")
+            self.assertEqual(result_sheet[1, 1].value, "meta-value")
+
+            # Locate rows dynamically since repeated rows expand on save.
+            # Rows between default and first data row should mirror the first data row.
+            if first_data_row - default_row > 1:
+                fill_row = first_data_row - 1
+                self.assertEqual(result_sheet[fill_row, 1].value, 42.0)
+                self.assertEqual(result_sheet[fill_row, 2].value, 5.0)
+
+            # First data row retains its original values
+            self.assertEqual(result_sheet[first_data_row, 1].value, 42.0)
+            self.assertEqual(result_sheet[first_data_row, 2].value, 7.0)
+        finally:
+            input_path.unlink(missing_ok=True)
+            output_path.unlink(missing_ok=True)
