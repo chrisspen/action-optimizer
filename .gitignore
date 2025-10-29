@@ -116,3 +116,6 @@ functions.yml
 repomix-output.md
 input.ods
 output.ods
+input.csv
+output.csv
+*.bak
