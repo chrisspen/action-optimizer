@@ -114,4 +114,5 @@ reports/*
 /cache
 functions.yml
 repomix-output.md
+input.ods
 output.ods
