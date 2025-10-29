@@ -153,6 +153,8 @@ class Tests(unittest.TestCase):
             baseline_sheet = baseline_doc.sheets[0]
             default_row = None
             first_data_row = None
+            baseline_default_metric = None
+            baseline_default_amount = None
             for idx in range(baseline_sheet.nrows()):
                 cell_value = baseline_sheet[idx, 0].value
                 if (
@@ -170,6 +172,9 @@ class Tests(unittest.TestCase):
                 ):
                     first_data_row = idx
                     break
+            if default_row is not None:
+                baseline_default_metric = baseline_sheet[default_row, 1].value
+                baseline_default_amount = baseline_sheet[default_row, 2].value
             self.assertIsNotNone(default_row)
             self.assertIsNotNone(first_data_row)
 
@@ -181,6 +186,21 @@ class Tests(unittest.TestCase):
             # Meta header row should be unchanged
             self.assertEqual(result_sheet[1, 0].value, "meta-key")
             self.assertEqual(result_sheet[1, 1].value, "meta-value")
+
+            # Default row values remain intact
+            result_default_row = None
+            for idx in range(result_sheet.nrows()):
+                if (
+                    result_sheet[idx, 0].value is not None
+                    and str(result_sheet[idx, 0].value).strip().lower() == "default"
+                ):
+                    result_default_row = idx
+                    break
+            self.assertIsNotNone(result_default_row)
+            if baseline_default_metric is not None:
+                self.assertEqual(result_sheet[result_default_row, 1].value, baseline_default_metric)
+            if baseline_default_amount is not None:
+                self.assertEqual(result_sheet[result_default_row, 2].value, baseline_default_amount)
 
             # Locate rows dynamically since repeated rows expand on save.
             # Rows between default and first data row should mirror the first data row.

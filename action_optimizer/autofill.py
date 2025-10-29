@@ -10,6 +10,7 @@ import argparse
 import re
 import sys
 from pathlib import Path
+from zipfile import ZipFile
 
 import ezodf
 from lxml import etree
@@ -34,62 +35,125 @@ def adjust_formula(formula: str, row_offset: int) -> str:
 # ----------------------------------------------------------------------
 # Read the default row, expanding repeated columns
 # ----------------------------------------------------------------------
-def read_defaults_row(sheet, default_row_idx):
-    """Return a list of default values, one per column, expanding repeated cells."""
+def read_row_from_zip(zip_path: Path, sheet_name: str, logical_row_idx: int, column_count: int):
+    """Return a list of values for the requested logical row, expanding repeated cells."""
     ns = {
         "table": "urn:oasis:names:tc:opendocument:xmlns:table:1.0",
         "office": "urn:oasis:names:tc:opendocument:xmlns:office:1.0",
         "text": "urn:oasis:names:tc:opendocument:xmlns:text:1.0",
     }
 
-    # Expand table rows to locate the logical row index, accounting for repeated rows.
-    row_node = None
-    logical_row = 0
-    for candidate in sheet.xmlnode.findall("./{*}table-row", namespaces=ns):
-        repeat = int(
-            candidate.get(
-                "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}number-rows-repeated",
-                "1",
-            )
-        )
-        if logical_row + repeat > default_row_idx:
-            row_node = candidate
-            break
-        logical_row += repeat
-    if row_node is None:
-        raise ValueError(f"Could not locate XML row for index {default_row_idx}")
+    table_name_attr = "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}name"
+    rows_repeated_attr = "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}number-rows-repeated"
+    cols_repeated_attr = "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}number-columns-repeated"
+    value_attr = "{urn:oasis:names:tc:opendocument:xmlns:office:1.0}value"
+    string_value_attr = "{urn:oasis:names:tc:opendocument:xmlns:office:1.0}string-value"
 
-    defaults = []
-    for cell in row_node:
-        tag = etree.QName(cell).localname
-        if tag not in {"table-cell", "covered-table-cell"}:
+    with ZipFile(zip_path) as zf:
+        with zf.open("content.xml") as stream:
+            context = etree.iterparse(stream, events=("start", "end"))
+            in_target_table = False
+            logical_row = 0
+            for event, elem in context:
+                tag = etree.QName(elem).localname
+                if event == "start":
+                    if tag == "table" and elem.get(table_name_attr) == sheet_name:
+                        in_target_table = True
+                        logical_row = 0
+                elif event == "end":
+                    if in_target_table and tag == "table-row":
+                        repeat = int(elem.get(rows_repeated_attr, "1"))
+                        if logical_row + repeat > logical_row_idx:
+                            defaults = []
+                            for cell in elem:
+                                cell_tag = etree.QName(cell).localname
+                                if cell_tag not in {"table-cell", "covered-table-cell"}:
+                                    continue
+
+                                repeat_cols = int(cell.get(cols_repeated_attr, "1"))
+                                if cell_tag == "covered-table-cell":
+                                    value = None
+                                else:
+                                    candidates = [
+                                        p.text
+                                        for p in cell.findall(
+                                            f"{{{ns['text']}}}p"
+                                        )
+                                        if p.text
+                                    ]
+                                    value = (
+                                        cell.get(value_attr)
+                                        or cell.get(string_value_attr)
+                                        or (candidates[0] if candidates else None)
+                                    )
+                                    if value is not None:
+                                        value = value.strip() or None
+                                defaults.extend([value] * repeat_cols)
+
+                            if len(defaults) > column_count:
+                                defaults = defaults[:column_count]
+                            while len(defaults) < column_count:
+                                defaults.append(None)
+                            return defaults
+                        logical_row += repeat
+                    if tag == "table" and in_target_table:
+                        in_target_table = False
+
+    raise ValueError(f"Could not locate row {logical_row_idx} in sheet '{sheet_name}'")
+
+
+# ----------------------------------------------------------------------
+# Snapshot & restore helpers for protected header rows
+# ----------------------------------------------------------------------
+def snapshot_rows(sheet, row_indices, raw_values=None):
+    """Capture value and formula for the specified rows."""
+    snapshots = []
+    ncols = sheet.ncols()
+    for row in row_indices:
+        if row >= sheet.nrows():
+            snapshots.append(None)
             continue
+        row_snapshot = []
+        override = None
+        if raw_values and row in raw_values:
+            override = raw_values[row]
+        for col in range(ncols):
+            cell = sheet[row, col]
+            if override is not None and col < len(override):
+                value = override[col]
+            else:
+                value = cell.value
+            row_snapshot.append((value, cell.formula))
+        snapshots.append(row_snapshot)
+    return snapshots
 
-        repeat = int(
-            cell.get(
-                "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}number-columns-repeated",
-                "1",
-            )
-        )
 
-        if tag == "covered-table-cell":
-            value = None
-        else:
-            value = (
-                cell.get("{urn:oasis:names:tc:opendocument:xmlns:office:1.0}value")
-                or cell.get("{urn:oasis:names:tc:opendocument:xmlns:office:1.0}string-value")
-                or next((p.text for p in cell.iterfind("./{*}p", namespaces=ns)), None)
-            )
-            if value is not None:
-                value = value.strip() or None
+TABLE_FORMULA_ATTR = "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}formula"
 
-        defaults.extend([value] * repeat)
 
-    # Pad to the real column count (ezodf may report more columns than stored)
-    while len(defaults) < sheet.ncols():
-        defaults.append(None)
-
-    return defaults
+def restore_rows(sheet, row_indices, snapshots):
+    """Restore previously captured rows (values and formulas)."""
+    ncols = sheet.ncols()
+    for idx, row in enumerate(row_indices):
+        if row >= sheet.nrows():
+            continue
+        row_snapshot = snapshots[idx]
+        if row_snapshot is None:
+            continue
+        for col in range(min(ncols, len(row_snapshot))):
+            value, formula = row_snapshot[col]
+            cell = sheet[row, col]
+            if formula:
+                cell.formula = formula
+                if value is not None:
+                    cell.set_value(value)
+            else:
+                if cell.formula:
+                    cell.xmlnode.attrib.pop(TABLE_FORMULA_ATTR, None)
+                if value is None:
+                    cell.clear()
+                else:
+                    cell.set_value(value)
 
 
 # ----------------------------------------------------------------------
@@ -117,7 +181,12 @@ def autofill_ods(in_path: Path, out_path: Path | None = None):
     # ------------------------------------------------------------------
     # 2. Load defaults (one per column)
     # ------------------------------------------------------------------
-    defaults = read_defaults_row(sheet, default_row_idx)
+    defaults = read_row_from_zip(
+        in_path,
+        sheet.name,
+        default_row_idx,
+        sheet.ncols(),
+    )
     print(f"Loaded {len(defaults)} default values (sheet reports {sheet.ncols()} columns)")
 
     # ------------------------------------------------------------------
@@ -128,6 +197,20 @@ def autofill_ods(in_path: Path, out_path: Path | None = None):
     if start_row < protected_rows:
         print(f"Warning: default row ({default_row_idx}) is inside the protected header block.")
         start_row = protected_rows
+
+    protected_indices = list(range(min(protected_rows, sheet.nrows())))
+    raw_header_rows = {}
+    for row in protected_indices:
+        try:
+            raw_header_rows[row] = read_row_from_zip(
+                in_path,
+                sheet.name,
+                row,
+                sheet.ncols(),
+            )
+        except ValueError:
+            raw_header_rows[row] = None
+    protected_snapshot = snapshot_rows(sheet, protected_indices, raw_header_rows)
 
     for col in range(sheet.ncols()):
         header = sheet[0, col].value
@@ -205,6 +288,8 @@ def autofill_ods(in_path: Path, out_path: Path | None = None):
     # ------------------------------------------------------------------
     # 4. Save
     # ------------------------------------------------------------------
+    restore_rows(sheet, protected_indices, protected_snapshot)
+
     if out_path is None:
         out_path = in_path.stem + "_autofilled.ods"
     else:
