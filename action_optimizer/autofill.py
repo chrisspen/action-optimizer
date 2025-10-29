@@ -74,20 +74,20 @@ def read_row_from_zip(zip_path: Path, sheet_name: str, logical_row_idx: int, col
                                 if cell_tag == "covered-table-cell":
                                     value = None
                                 else:
-                                    candidates = [
-                                        p.text
-                                        for p in cell.findall(
-                                            f"{{{ns['text']}}}p"
-                                        )
-                                        if p.text
-                                    ]
+                                    paragraphs = []
+                                    for p in cell.findall(f"{{{ns['text']}}}p"):
+                                        text = "".join(p.itertext()).strip()
+                                        if text:
+                                            paragraphs.append(text)
                                     value = (
                                         cell.get(value_attr)
                                         or cell.get(string_value_attr)
-                                        or (candidates[0] if candidates else None)
+                                        or (paragraphs[0] if paragraphs else None)
                                     )
-                                    if value is not None:
-                                        value = value.strip() or None
+                                    if isinstance(value, str):
+                                        value = value.strip()
+                                        if value == "":
+                                            value = None
                                 defaults.extend([value] * repeat_cols)
 
                             if len(defaults) > column_count:
