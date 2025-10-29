@@ -233,17 +233,20 @@ def autofill_ods(in_path: Path, out_path: Path | None = None):
         # --------------------------------------------------------------
         first_val_row = None
         first_is_formula = False
-        first_raw = None
+        first_value = None
+        first_formula = None
+        first_literal = None
 
         for r in range(start_row, sheet.nrows()):
             cell = sheet[r, col]
             if cell.formula:
-                first_raw = cell.formula
                 first_is_formula = True
+                first_value = cell.value
+                first_formula = cell.formula
                 first_val_row = r
                 break
             if cell.value not in (None, "", " "):
-                first_raw = cell.value
+                first_literal = cell.value
                 first_val_row = r
                 break
 
@@ -271,19 +274,22 @@ def autofill_ods(in_path: Path, out_path: Path | None = None):
         # "last" – copy the first non-empty value/formula upwards
         # --------------------------------------------------------------
         if first_is_formula:
-            # ODS stores formulas as "of:=" prefix
-            base_formula = first_raw
+            base_formula = first_formula or ""
             if base_formula.startswith("of:="):
                 base_formula = base_formula[4:]
 
             for r in range(start_row, first_val_row):
                 offset = r - first_val_row
                 shifted = adjust_formula(base_formula, offset)
-                sheet[r, col].formula = f"of:={shifted}"
-        else:
-            # plain value
-            for r in range(start_row, first_val_row):
-                sheet[r, col].set_value(first_raw)
+                cell = sheet[r, col]
+                cell.formula = f"of:={shifted}"
+                if first_value not in (None, "", " "):
+                    cell.set_value(first_value)
+            continue
+
+        # Plain value
+        for r in range(start_row, first_val_row):
+            sheet[r, col].set_value(first_literal)
 
     # ------------------------------------------------------------------
     # 4. Save
