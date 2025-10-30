@@ -3,9 +3,40 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import ezodf
+from odf.namespaces import OFFICENS, TABLENS
+from odf.opendocument import OpenDocumentSpreadsheet
+from odf.table import Table, TableCell, TableRow
+from odf.text import P
 
 from action_optimizer.autofill import autofill_ods
+from action_optimizer.ods import OdsDocument
+
+
+def _set_element_text(element, text: str | None) -> None:
+    """Replace textual content for tests when constructing fixtures."""
+    while element.hasChildNodes():
+        element.removeChild(element.firstChild)
+    if text:
+        paragraph = P()
+        paragraph.addText(text)
+        element.addElement(paragraph)
+
+
+def _set_cell_value(cell: TableCell, value) -> None:
+    if value is None:
+        _set_element_text(cell, None)
+        return
+    if isinstance(value, (int, float)):
+        cell.setAttrNS(OFFICENS, "value-type", "float")
+        cell.setAttrNS(OFFICENS, "value", str(value))
+        if cell.getAttrNS(OFFICENS, "string-value") is not None:
+            cell.removeAttrNS(OFFICENS, "string-value")
+    else:
+        cell.setAttrNS(OFFICENS, "value-type", "string")
+        cell.setAttrNS(OFFICENS, "string-value", str(value))
+        if cell.getAttrNS(OFFICENS, "value") is not None:
+            cell.removeAttrNS(OFFICENS, "value")
+    _set_element_text(cell, str(value))
 
 
 class Tests(unittest.TestCase):
@@ -14,10 +45,8 @@ class Tests(unittest.TestCase):
         """
         Test that empty cells above the first non-empty value get filled with 'last' logic.
         """
-        # 1. Create minimal ODS
-        doc = ezodf.newdoc(doctype="ods")
-        sheet = ezodf.Table("Sheet1", size=(32, 8))
-        doc.sheets += sheet
+        doc = OdsDocument.new_blank("Sheet1", 32, 8)
+        sheet = doc.sheets[0]
 
         # Header row (0)
         sheet[0, 0].set_value("Date")
@@ -31,27 +60,20 @@ class Tests(unittest.TestCase):
         sheet[12, 0].set_value("2025-10-28")
         sheet[12, 1].set_value(42) # Numeric value to fill upwards
 
-        # Save to temp file
         with tempfile.NamedTemporaryFile(suffix=".ods", delete=False) as tmp:
-            doc.saveas(tmp.name)
+            doc.save(tmp.name)
             input_path = Path(tmp.name)
 
-        # 2. Run autofill
         output_path = input_path.with_stem(input_path.stem + "_autofilled")
         autofill_ods(input_path, output_path)
 
-        # 3. Verify output
-        result_doc = ezodf.opendoc(str(output_path))
+        result_doc = OdsDocument.load(str(output_path))
         result_sheet = result_doc.sheets[0]
 
-        # Headers/default untouched
         self.assertEqual(result_sheet[0, 1].value, "Test Col")
         self.assertEqual(result_sheet[11, 1].value, "last")
+        self.assertEqual(result_sheet[12, 1].value, 42.0)
 
-        # Filled value in row 12 (original)
-        self.assertEqual(result_sheet[12, 1].value, 42)
-
-        # Clean up files
         input_path.unlink(missing_ok=True)
         output_path.unlink(missing_ok=True)
 
@@ -62,23 +84,19 @@ class Tests(unittest.TestCase):
         fixtures_dir = Path(__file__).resolve().parent.parent / "fixtures"
         input_path = fixtures_dir / "supplements-sample.ods"
         output_path = Path("/tmp/output.ods")
-
-        # Ensure a clean slate before writing.
         output_path.unlink(missing_ok=True)
 
         autofill_ods(input_path, output_path)
 
         try:
-            result_doc = ezodf.opendoc(str(output_path))
+            result_doc = OdsDocument.load(str(output_path))
             sheet = result_doc.sheets[0]
 
-            # Row 13 is zero-indexed row 12; columns H/I/J are indexes 7/8/9.
             self.assertEqual(sheet[12, 7].value, 50.0)
             self.assertEqual(sheet[12, 8].value, 0.0)
             j_cell = sheet[12, 9]
-            j_value = j_cell.value
             self.assertEqual(j_cell.formula, "of:=SUM([.I13:.I23])")
-            self.assertEqual(j_value, 0.0)
+            self.assertEqual(j_cell.value, 0.0)
         finally:
             output_path.unlink(missing_ok=True)
 
@@ -86,46 +104,41 @@ class Tests(unittest.TestCase):
         """
         Ensure default extraction works even when header rows rely on row repetition.
         """
-        doc = ezodf.newdoc(doctype="ods")
-        sheet = ezodf.Table("Sheet1", size=(40, 5))
-        doc.sheets += sheet
 
-        # Header row
-        headers = ["key", "metric", "amount", "note", "extra"]
-        for idx, name in enumerate(headers):
-            sheet[0, idx].set_value(name)
+        def add_row(table: Table, values, repeat: int = 1):
+            row = TableRow()
+            for value in values:
+                cell = TableCell()
+                if value is not None:
+                    _set_cell_value(cell, value)
+                row.addElement(cell)
+            if repeat > 1:
+                row.setAttrNS(TABLENS, "number-rows-repeated", str(repeat))
+            table.addElement(row)
+            return row
 
-        # Meta row that should remain untouched
-        sheet[1, 0].set_value("meta-key")
-        sheet[1, 1].set_value("meta-value")
+        doc = OpenDocumentSpreadsheet()
+        table = Table(name="Sheet1")
+        doc.spreadsheet.addElement(table)
 
-        # Create a block of repeated blank rows (simulates wide sheet metadata spacing)
-        blank_row_node = sheet.xmlnode.findall(
-            "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}table-row"
-        )[2]
-        blank_row_node.set(
-            "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}number-rows-repeated", "8"
-        )
-
-        # Default row positioned after the repeated block
-        default_idx = 12
-        sheet[default_idx, 0].set_value("default")
-        sheet[default_idx, 1].set_value("last")
-        sheet[default_idx, 2].set_value("5")
-
-        # First populated data row further down
-        data_idx = 20
-        sheet[data_idx, 1].set_value(42)
-        sheet[data_idx, 2].set_value(7)
+        add_row(table, ["key", "metric", "amount", "note", "extra"]) # header row 0
+        add_row(table, ["meta-key", "meta-value", None, None, None]) # meta row 1
+        add_row(table, [None, None, None, None, None], repeat=8) # repeated block rows 2-9
+        add_row(table, [None, None, None, None, None]) # row 10
+        add_row(table, [None, None, None, None, None]) # row 11
+        add_row(table, ["default", "last", "5", None, None]) # default row 12
+        for _ in range(7): # rows 13-19 blank
+            add_row(table, [None, None, None, None, None])
+        add_row(table, [None, 42, 7, None, None]) # data row 20
 
         with tempfile.NamedTemporaryFile(suffix=".ods", delete=False) as tmp_in:
-            doc.saveas(tmp_in.name)
+            doc.save(tmp_in.name)
             input_path = Path(tmp_in.name)
 
         output_path = input_path.with_stem(input_path.stem + "_autofilled")
 
         try:
-            baseline_doc = ezodf.opendoc(str(input_path))
+            baseline_doc = OdsDocument.load(str(input_path))
             baseline_sheet = baseline_doc.sheets[0]
             default_row = None
             first_data_row = None
@@ -156,14 +169,12 @@ class Tests(unittest.TestCase):
 
             autofill_ods(input_path, output_path)
 
-            result_doc = ezodf.opendoc(str(output_path))
+            result_doc = OdsDocument.load(str(output_path))
             result_sheet = result_doc.sheets[0]
 
-            # Meta header row should be unchanged
             self.assertEqual(result_sheet[1, 0].value, "meta-key")
             self.assertEqual(result_sheet[1, 1].value, "meta-value")
 
-            # Default row values remain intact
             result_default_row = None
             for idx in range(result_sheet.nrows()):
                 if (
@@ -178,14 +189,11 @@ class Tests(unittest.TestCase):
             if baseline_default_amount is not None:
                 self.assertEqual(result_sheet[result_default_row, 2].value, baseline_default_amount)
 
-            # Locate rows dynamically since repeated rows expand on save.
-            # Rows between default and first data row should mirror the first data row.
             if first_data_row - default_row > 1:
                 fill_row = first_data_row - 1
                 self.assertEqual(result_sheet[fill_row, 1].value, 42.0)
                 self.assertEqual(result_sheet[fill_row, 2].value, 5.0)
 
-            # First data row retains its original values
             self.assertEqual(result_sheet[first_data_row, 1].value, 42.0)
             self.assertEqual(result_sheet[first_data_row, 2].value, 7.0)
         finally:

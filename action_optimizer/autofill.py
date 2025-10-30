@@ -12,8 +12,9 @@ import sys
 from pathlib import Path
 from zipfile import ZipFile
 
-import ezodf
 from lxml import etree
+
+from action_optimizer.ods import OdsDocument
 
 # ----------------------------------------------------------------------
 # Helper: shift ODS cell references (A1, $A$1, .A1, etc.) by a row offset
@@ -161,7 +162,7 @@ def restore_rows(sheet, row_indices, snapshots):
 # ----------------------------------------------------------------------
 def autofill_ods(in_path: Path, out_path: Path | None = None):
     print(f"Opening: {in_path}")
-    doc = ezodf.opendoc(str(in_path))
+    doc = OdsDocument.load(str(in_path))
     sheet = doc.sheets[0]
 
     # ------------------------------------------------------------------
@@ -302,7 +303,7 @@ def autofill_ods(in_path: Path, out_path: Path | None = None):
         out_path = Path(out_path)
 
     print(f"Saving to: {out_path}")
-    doc.saveas(str(out_path))
+    doc.save(str(out_path))
     print("Done!")
 
 
