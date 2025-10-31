@@ -138,6 +138,43 @@ class Tests(unittest.TestCase):
             input_path.unlink(missing_ok=True)
             output_path.unlink(missing_ok=True)
 
+    def test_named_formula_with_digits_preserved(self):
+        """
+        Ensure formulas referencing named ranges with digits are not altered.
+        """
+        doc = OdsDocument.new_blank("Sheet1", 24, 4)
+        sheet = doc.sheets[0]
+
+        sheet[0, 0].set_value("Date")
+        sheet[0, 1].set_value("dose_formula")
+
+        sheet[11, 0].set_value("default")
+        sheet[11, 1].set_value("last")
+
+        base_formula = "of:=EV_D3_IU"
+        sheet[15, 0].set_value("2025-01-15")
+        sheet[15, 1].formula = base_formula
+        sheet[15, 1].set_value(88)
+
+        with tempfile.NamedTemporaryFile(suffix=".ods", delete=False) as tmp_in:
+            doc.save(tmp_in.name)
+            input_path = Path(tmp_in.name)
+
+        output_path = input_path.with_stem(input_path.stem + "_autofilled")
+
+        try:
+            autofill_ods(input_path, output_path)
+
+            result_doc = OdsDocument.load(str(output_path))
+            result_sheet = result_doc.sheets[0]
+            filled_cell = result_sheet[12, 1]
+
+            self.assertEqual(filled_cell.formula, base_formula)
+            self.assertEqual(filled_cell.value, 88.0)
+        finally:
+            input_path.unlink(missing_ok=True)
+            output_path.unlink(missing_ok=True)
+
     def test_header_row_is_preserved(self):
         """
         Ensure autofill preserves metadata in the protected header rows.
