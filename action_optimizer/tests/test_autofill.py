@@ -100,6 +100,44 @@ class Tests(unittest.TestCase):
         finally:
             output_path.unlink(missing_ok=True)
 
+    def test_absolute_row_reference_preserved(self):
+        """
+        Ensure formulas keep absolute row references (`$`) when shifted upward.
+        """
+        doc = OdsDocument.new_blank("Sheet1", 24, 6)
+        sheet = doc.sheets[0]
+
+        # Headers and defaults
+        sheet[0, 0].set_value("Date")
+        sheet[0, 2].set_value("next_ex")
+        sheet[11, 0].set_value("default")
+        sheet[11, 2].set_value("last")
+
+        base_formula = "of:=INDEX([.C$1:.E$1]; MATCH(MAX([.C15:.E15]); [.C15:.E15]; 0))"
+        sheet[15, 0].set_value("2025-01-15")
+        sheet[15, 2].formula = base_formula
+        sheet[15, 2].set_value("cached")
+
+        with tempfile.NamedTemporaryFile(suffix=".ods", delete=False) as tmp_in:
+            doc.save(tmp_in.name)
+            input_path = Path(tmp_in.name)
+
+        output_path = input_path.with_stem(input_path.stem + "_autofilled")
+
+        try:
+            autofill_ods(input_path, output_path)
+
+            result_doc = OdsDocument.load(str(output_path))
+            result_sheet = result_doc.sheets[0]
+            filled_formula = result_sheet[12, 2].formula
+
+            expected_formula = "of:=INDEX([.C$1:.E$1]; MATCH(MAX([.C12:.E12]); [.C12:.E12]; 0))"
+            self.assertEqual(filled_formula, expected_formula)
+            self.assertEqual(result_sheet[12, 2].value, "cached")
+        finally:
+            input_path.unlink(missing_ok=True)
+            output_path.unlink(missing_ok=True)
+
     def test_header_row_is_preserved(self):
         """
         Ensure autofill preserves metadata in the protected header rows.
