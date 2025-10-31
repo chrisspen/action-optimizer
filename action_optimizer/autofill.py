@@ -19,7 +19,8 @@ from action_optimizer.ods import OdsDocument
 # ----------------------------------------------------------------------
 # Helper: shift ODS cell references (A1, $A$1, .A1, etc.) by a row offset
 # ----------------------------------------------------------------------
-_CELL_REF_RE = re.compile(r"([.$]?)([A-Z]+)([.$]?)(\d+)")
+# Only shift standalone cell references (e.g., A1, $A$1). Avoid touching tokens embedded in named ranges (e.g., EV_D3_IU).
+_CELL_REF_RE = re.compile(r"(?<![A-Z0-9_])([.$]?)([A-Z]+)([.$]?)(\d+)(?![A-Z0-9_])")
 
 
 def _shift_ref(match, row_offset):
