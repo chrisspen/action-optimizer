@@ -8,7 +8,7 @@ from odf.opendocument import OpenDocumentSpreadsheet
 from odf.table import Table, TableCell, TableRow
 from odf.text import P
 
-from action_optimizer.autofill import autofill_ods
+from action_optimizer.autofill import autofill_ods, read_row_from_zip
 from action_optimizer.ods import OdsDocument
 
 
@@ -98,6 +98,51 @@ class Tests(unittest.TestCase):
             self.assertEqual(j_cell.formula, "of:=SUM([.I13:.I23])")
             self.assertEqual(j_cell.value, 0.0)
         finally:
+            output_path.unlink(missing_ok=True)
+
+    def test_header_row_is_preserved(self):
+        """
+        Ensure autofill preserves metadata in the protected header rows.
+        """
+        doc = OdsDocument.new_blank("Sheet1", 16, 3)
+        sheet = doc.sheets[0]
+
+        # Header row values.
+        sheet[0, 0].set_value("key")
+        sheet[0, 1].set_value("learn")
+        sheet[0, 2].set_value("predict")
+
+        sheet[1, 0].set_value("numeric")
+        sheet[2, 0].set_value("0,60,15")
+        sheet[8, 0].set_value("1")
+        sheet[9, 0].set_value("1")
+
+        sheet[11, 0].set_value("default")
+        sheet[11, 1].set_value("last")
+
+        sheet[12, 0].set_value("2025-11-02")
+        sheet[12, 1].set_value(5)
+
+        with tempfile.NamedTemporaryFile(suffix=".ods", delete=False) as tmp_in:
+            doc.save(tmp_in.name)
+            input_path = Path(tmp_in.name)
+
+        output_path = input_path.with_stem(input_path.stem + "_autofilled")
+
+        try:
+            # Capture metadata before running autofill.
+            baseline_learn = read_row_from_zip(input_path, "Sheet1", 8, 3)[1]
+            baseline_predict = read_row_from_zip(input_path, "Sheet1", 9, 3)[1]
+
+            autofill_ods(input_path, output_path)
+
+            header_learn = read_row_from_zip(output_path, "Sheet1", 8, 3)[1]
+            header_predict = read_row_from_zip(output_path, "Sheet1", 9, 3)[1]
+
+            self.assertEqual(baseline_learn, header_learn)
+            self.assertEqual(baseline_predict, header_predict)
+        finally:
+            input_path.unlink(missing_ok=True)
             output_path.unlink(missing_ok=True)
 
     def test_autofill_with_repeated_rows(self):

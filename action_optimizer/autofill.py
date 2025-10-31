@@ -36,7 +36,12 @@ def adjust_formula(formula: str, row_offset: int) -> str:
 # ----------------------------------------------------------------------
 # Read the default row, expanding repeated columns
 # ----------------------------------------------------------------------
-def read_row_from_zip(zip_path: Path, sheet_name: str, logical_row_idx: int, column_count: int):
+def read_row_from_zip(
+    zip_path: Path,
+    sheet_name: str,
+    logical_row_idx: int,
+    column_count: int | None = None,
+):
     """Return a list of values for the requested logical row, expanding repeated cells."""
     ns = {
         "table": "urn:oasis:names:tc:opendocument:xmlns:table:1.0",
@@ -91,10 +96,11 @@ def read_row_from_zip(zip_path: Path, sheet_name: str, logical_row_idx: int, col
                                             value = None
                                 defaults.extend([value] * repeat_cols)
 
-                            if len(defaults) > column_count:
-                                defaults = defaults[:column_count]
-                            while len(defaults) < column_count:
-                                defaults.append(None)
+                            if column_count is not None:
+                                if len(defaults) > column_count:
+                                    defaults = defaults[:column_count]
+                                while len(defaults) < column_count:
+                                    defaults.append(None)
                             return defaults
                         logical_row += repeat
                     if tag == "table" and in_target_table:
@@ -106,57 +112,6 @@ def read_row_from_zip(zip_path: Path, sheet_name: str, logical_row_idx: int, col
 # ----------------------------------------------------------------------
 # Snapshot & restore helpers for protected header rows
 # ----------------------------------------------------------------------
-def snapshot_rows(sheet, row_indices, raw_values=None):
-    """Capture value and formula for the specified rows."""
-    snapshots = []
-    ncols = sheet.ncols()
-    for row in row_indices:
-        if row >= sheet.nrows():
-            snapshots.append(None)
-            continue
-        row_snapshot = []
-        override = None
-        if raw_values and row in raw_values:
-            override = raw_values[row]
-        for col in range(ncols):
-            cell = sheet[row, col]
-            if override is not None and col < len(override):
-                value = override[col]
-            else:
-                value = cell.value
-            row_snapshot.append((value, cell.formula))
-        snapshots.append(row_snapshot)
-    return snapshots
-
-
-TABLE_FORMULA_ATTR = "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}formula"
-
-
-def restore_rows(sheet, row_indices, snapshots):
-    """Restore previously captured rows (values and formulas)."""
-    ncols = sheet.ncols()
-    for idx, row in enumerate(row_indices):
-        if row >= sheet.nrows():
-            continue
-        row_snapshot = snapshots[idx]
-        if row_snapshot is None:
-            continue
-        for col in range(min(ncols, len(row_snapshot))):
-            value, formula = row_snapshot[col]
-            cell = sheet[row, col]
-            if formula:
-                cell.formula = formula
-                if value is not None:
-                    cell.set_value(value)
-            else:
-                if cell.formula:
-                    cell.xmlnode.attrib.pop(TABLE_FORMULA_ATTR, None)
-                if value is None:
-                    cell.clear()
-                else:
-                    cell.set_value(value)
-
-
 # ----------------------------------------------------------------------
 # Main autofill routine
 # ----------------------------------------------------------------------
@@ -164,6 +119,10 @@ def autofill_ods(in_path: Path, out_path: Path | None = None):
     print(f"Opening: {in_path}")
     doc = OdsDocument.load(str(in_path))
     sheet = doc.sheets[0]
+
+    # Read header row once so we don't mutate the sheet's protected rows.
+    header_values = read_row_from_zip(in_path, sheet.name, 0)
+    column_count = len(header_values)
 
     # ------------------------------------------------------------------
     # 1. Locate the “default” row (column A == "default")
@@ -186,9 +145,9 @@ def autofill_ods(in_path: Path, out_path: Path | None = None):
         in_path,
         sheet.name,
         default_row_idx,
-        sheet.ncols(),
+        column_count,
     )
-    print(f"Loaded {len(defaults)} default values (sheet reports {sheet.ncols()} columns)")
+    print(f"Loaded {len(defaults)} default values (sheet reports {column_count} columns)")
 
     # ------------------------------------------------------------------
     # 3. Process each column that has a header name
@@ -199,22 +158,8 @@ def autofill_ods(in_path: Path, out_path: Path | None = None):
         print(f"Warning: default row ({default_row_idx}) is inside the protected header block.")
         start_row = protected_rows
 
-    protected_indices = list(range(min(protected_rows, sheet.nrows())))
-    raw_header_rows = {}
-    for row in protected_indices:
-        try:
-            raw_header_rows[row] = read_row_from_zip(
-                in_path,
-                sheet.name,
-                row,
-                sheet.ncols(),
-            )
-        except ValueError:
-            raw_header_rows[row] = None
-    protected_snapshot = snapshot_rows(sheet, protected_indices, raw_header_rows)
-
-    for col in range(sheet.ncols()):
-        header = sheet[0, col].value
+    for col in range(column_count):
+        header = header_values[col]
         if not header: # empty header → skip column
             continue
 
@@ -290,12 +235,11 @@ def autofill_ods(in_path: Path, out_path: Path | None = None):
 
         # Plain value
         for r in range(start_row, first_val_row):
-            sheet[r, col].set_value(first_literal)
+                sheet[r, col].set_value(first_literal)
 
     # ------------------------------------------------------------------
     # 4. Save
     # ------------------------------------------------------------------
-    restore_rows(sheet, protected_indices, protected_snapshot)
 
     if out_path is None:
         out_path = in_path.stem + "_autofilled.ods"
