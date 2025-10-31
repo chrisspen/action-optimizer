@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
+from collections.abc import Iterable
 
 from odf import teletype
 from odf.namespaces import OFFICENS, TABLENS, TEXTNS
@@ -17,7 +18,7 @@ def _is_tag(node, namespace: str, local: str) -> bool:
     return getattr(node, "qname", None) == (namespace, local)
 
 
-def _set_element_text(element, text: Optional[str]) -> None:
+def _set_element_text(element, text: str | None) -> None:
     """Replace the textual content of *element* with *text*."""
     while element.hasChildNodes():
         element.removeChild(element.firstChild)
@@ -63,9 +64,9 @@ def _clone_row(row: TableRow) -> TableRow:
     return clone
 
 
-def _expand_repeated_cells(row: TableRow) -> List[TableCell | CoveredTableCell]:
+def _expand_repeated_cells(row: TableRow) -> list[TableCell | CoveredTableCell]:
     """Expand `table:number-columns-repeated` attributes into explicit cells."""
-    cells: List[TableCell | CoveredTableCell] = []
+    cells: list[TableCell | CoveredTableCell] = []
     node = row.firstChild
     while node is not None:
         next_node = node.nextSibling
@@ -96,7 +97,7 @@ class RowBlock:
 class OdsCell:
     """Wrapper providing convenient access to a table cell."""
 
-    sheet: "OdsSheet"
+    sheet: OdsSheet
     row_element: TableRow
     col_index: int
 
@@ -117,13 +118,13 @@ class OdsCell:
         return new_cell
 
     @property
-    def formula(self) -> Optional[str]:
+    def formula(self) -> str | None:
         element = self._element()
         formula = element.getAttrNS(TABLENS, "formula")
         return formula or None
 
     @formula.setter
-    def formula(self, value: Optional[str]) -> None:
+    def formula(self, value: str | None) -> None:
         element = self._ensure_table_cell()
         if value:
             element.setAttrNS(TABLENS, "formula", value)
@@ -186,8 +187,8 @@ class OdsSheet:
     def __init__(self, table: Table):
         self._table = table
         self.name = table.getAttrNS(TABLENS, "name") or ""
-        self._row_blocks: List[RowBlock] = []
-        self._row_cells: Dict[int, List[TableCell | CoveredTableCell]] = {}
+        self._row_blocks: list[RowBlock] = []
+        self._row_cells: dict[int, list[TableCell | CoveredTableCell]] = {}
         self._ncols = 0
 
         node = table.firstChild
@@ -200,7 +201,7 @@ class OdsSheet:
                 self._row_blocks.append(RowBlock(node, repeat, expanded))
             node = next_node
 
-    def _locate_block(self, index: int) -> Tuple[int, RowBlock, int]:
+    def _locate_block(self, index: int) -> tuple[int, RowBlock, int]:
         total = 0
         for idx, block in enumerate(self._row_blocks):
             if index < total + block.repeat:
@@ -218,7 +219,7 @@ class OdsSheet:
         if element.getAttrNS(TABLENS, "number-rows-repeated") is not None:
             element.removeAttrNS(TABLENS, "number-rows-repeated")
 
-        new_blocks: List[RowBlock] = [RowBlock(element, 1, True)]
+        new_blocks: list[RowBlock] = [RowBlock(element, 1, True)]
         previous = element
 
         for _ in range(1, consumed):
@@ -246,14 +247,13 @@ class OdsSheet:
             return block.element
         return self._expand_row_block(block_idx, offset)
 
-    def _get_row_cells(self, row: TableRow) -> List[TableCell | CoveredTableCell]:
+    def _get_row_cells(self, row: TableRow) -> list[TableCell | CoveredTableCell]:
         key = id(row)
         cells = self._row_cells.get(key)
         if cells is None:
             cells = _expand_repeated_cells(row)
             self._row_cells[key] = cells
-            if len(cells) > self._ncols:
-                self._ncols = len(cells)
+            self._ncols = max(self._ncols, len(cells))
         return cells
 
     def _ensure_column(self, row: TableRow, col_idx: int) -> None:
@@ -264,8 +264,7 @@ class OdsSheet:
             new_cell = TableCell()
             row.addElement(new_cell)
             cells.append(new_cell)
-        if col_idx + 1 > self._ncols:
-            self._ncols = col_idx + 1
+        self._ncols = max(self._ncols, col_idx + 1)
 
     def nrows(self) -> int:
         return sum(block.repeat for block in self._row_blocks)
@@ -275,7 +274,7 @@ class OdsSheet:
             self._get_row_cells(self._ensure_row(0))
         return self._ncols
 
-    def __getitem__(self, key: Tuple[int, int]) -> OdsCell:
+    def __getitem__(self, key: tuple[int, int]) -> OdsCell:
         row_idx, col_idx = key
         row = self._ensure_row(row_idx)
         self._ensure_column(row, col_idx)
@@ -288,15 +287,15 @@ class OdsDocument:
     def __init__(self, document: OpenDocument):
         self._document = document
         tables: Iterable[Table] = document.spreadsheet.getElementsByType(Table)
-        self.sheets: List[OdsSheet] = [OdsSheet(table) for table in tables]
+        self.sheets: list[OdsSheet] = [OdsSheet(table) for table in tables]
 
     @classmethod
-    def load(cls, path: str | bytes) -> "OdsDocument":
+    def load(cls, path: str | bytes) -> OdsDocument:
         document = load(path)
         return cls(document)
 
     @classmethod
-    def new_blank(cls, sheet_name: str, rows: int, cols: int) -> "OdsDocument":
+    def new_blank(cls, sheet_name: str, rows: int, cols: int) -> OdsDocument:
         document = OpenDocumentSpreadsheet()
         table = Table(name=sheet_name)
         for _ in range(rows):
