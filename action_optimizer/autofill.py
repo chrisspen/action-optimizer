@@ -24,7 +24,10 @@ _CELL_REF_RE = re.compile(r"([.$]?)([A-Z]+)([.$]?)(\d+)")
 
 def _shift_ref(match, row_offset):
     abs_col, col, abs_row, row = match.groups()
-    new_row = int(row) + row_offset
+    if abs_row == "$": # absolute row reference stays fixed
+        new_row = int(row)
+    else:
+        new_row = int(row) + row_offset
     return f"{abs_col}{col}{abs_row}{new_row}"
 
 
