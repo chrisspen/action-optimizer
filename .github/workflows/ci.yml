@@ -9,7 +9,7 @@ jobs:
     # This should match what's used in init_virtualenv.sh.
     strategy:
       matrix:
-        python-version: [3.9]
+        python-version: ["3.10"]
 
     steps:
     - name: Checkout repository
@@ -23,12 +23,10 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y weka libsvm-java libsvm3-java
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt -r requirements-test.txt
+        sudo apt-get install -y weka libsvm-java libsvm3-java libreoffice-common
 
-#    - name: Run init_virtualenv.sh
-#      run: ./init_virtualenv.sh
+    - name: Initialize Python virtual environment
+      run: ./init_virtualenv.sh
 
     - name: Run PEP8 check
       run: ./pep8.sh

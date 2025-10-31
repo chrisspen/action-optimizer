@@ -7,5 +7,6 @@ scipy==1.9.0
 matplotlib==3.5.2
 scikit-learn==1.1.1
 pandas_ods_reader==0.1.4
-ezodf==0.3.2
+odfpy==1.4.1
 openpyxl==3.1.5
+PyYAML>=6.0

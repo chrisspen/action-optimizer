@@ -6,7 +6,7 @@ Action Optimizer
 Installation
 ------------
 
-    sudo apt-get install weka libsvm-java libsvm3-java
+    sudo apt-get install weka libsvm-java libsvm3-java libreoffice-common
     ./init_virtualenv.sh
 
 Usage

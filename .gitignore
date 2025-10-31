@@ -107,7 +107,6 @@ venv.bak/
 /nohup.out
 /cmp
 *.load
-*.csv
 
 reports/*
 .aider*

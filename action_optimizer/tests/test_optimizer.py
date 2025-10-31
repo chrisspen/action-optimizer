@@ -9,7 +9,7 @@ import os
 import unittest
 from pprint import pprint
 
-from optimizer import Optimizer, fit_gaussian, gaussian_func, fit_linear, linear_func, r2_score, fit_sigmoid, sigmoid_func
+from action_optimizer.optimizer import Optimizer, fit_gaussian, gaussian_func, fit_linear, linear_func, r2_score, fit_sigmoid, sigmoid_func
 
 SHOW_GRAPH = int(os.environ.get('SHOW_GRAPH', 0))
 
@@ -165,7 +165,7 @@ class Tests(unittest.TestCase):
 
     def test_gaussian_bed_data(self):
         import numpy as np
-        d = np.loadtxt(os.path.join(os.path.dirname(__file__), 'fixtures', 'bed-values.csv'), delimiter=',')
+        d = np.loadtxt(os.path.join(os.path.dirname(__file__), '..', 'fixtures', 'bed-values.csv'), delimiter=',')
         x = d[:, 0]
         print('x:', x)
         y = d[:, 1]
