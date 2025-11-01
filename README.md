@@ -16,6 +16,11 @@ Usage
     [ ! -d .env ] && ./init_virtualenv.sh
     .env/bin/python -m action_optimizer.optimizer path/to/spreadsheet.ods
 
+or:
+
+    cd scripts
+    ./run_all.sh
+
 Update functions:
 
     ./list_funcs.sh

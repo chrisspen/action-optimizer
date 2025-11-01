@@ -16,7 +16,7 @@ cd $SCRIPT_DIR/..
 
 cd $SCRIPT_DIR
 
-./run_ao.sh &
+./run_ao_ens.sh &
 ./run_ao_pcc.sh &
 wait
 
