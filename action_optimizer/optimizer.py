@@ -594,8 +594,86 @@ class Optimizer:
         logger.info('column_predictables: %s', column_predictables)
 
         # Build the index that indicates how we're allowed to hypothetically change columns when predicting.
+        change_code_map = {0: NA_CHANGE, 1: RELATIVE_CHANGE, 2: ABSOLUTE_CHANGE}
+
+        def _normalize_change_token(token):
+            normalized = None
+            if token is None:
+                normalized = NA_CHANGE
+            elif isinstance(token, str):
+                stripped = token.strip()
+                if not stripped:
+                    normalized = NA_CHANGE
+                else:
+                    lowered = stripped.lower()
+                    if lowered == 'change' or lowered in ('na', NA_CHANGE):
+                        normalized = NA_CHANGE
+                    elif lowered in (RELATIVE_CHANGE, ABSOLUTE_CHANGE):
+                        normalized = lowered
+                    elif lowered in ('0', '1', '2'):
+                        normalized = change_code_map[int(lowered)]
+            elif isinstance(token, (int, float, Decimal)) and not isinstance(token, bool):
+                try:
+                    int_token = int(token)
+                except (TypeError, ValueError):
+                    int_token = None
+                if int_token is not None and token == int_token:
+                    normalized = change_code_map.get(int_token)
+            return normalized
+
+        def _coerce_change_row(row):
+            if not row:
+                return None
+            normalized = []
+            for token in row:
+                normalized_token = _normalize_change_token(token)
+                if normalized_token is None:
+                    return None
+                normalized.append(normalized_token)
+            if not normalized:
+                return None
+            normalized[0] = NA_CHANGE
+            if len(normalized) < len(column_names):
+                normalized.extend([NA_CHANGE] * (len(column_names) - len(normalized)))
+            else:
+                normalized = normalized[:len(column_names)]
+            return normalized
+
+        def _find_change_row(rows):
+            candidate_indices = []
+            for idx in (CHANGE_ROW_INDEX, DEFAULT_ROW_INDEX):
+                if idx < len(rows):
+                    candidate_indices.append(idx)
+            seen = set()
+            for idx in candidate_indices:
+                row = rows[idx]
+                seen.add(idx)
+                if row and isinstance(row[0], str) and row[0].strip().lower() == 'change':
+                    normalized = _coerce_change_row(row)
+                    if normalized:
+                        return normalized, idx
+            for idx, row in enumerate(rows):
+                if idx in seen:
+                    continue
+                if row and isinstance(row[0], str) and row[0].strip().lower() == 'change':
+                    normalized = _coerce_change_row(row)
+                    if normalized:
+                        return normalized, idx
+            for idx in candidate_indices:
+                row = rows[idx]
+                normalized = _coerce_change_row(row)
+                if normalized:
+                    return normalized, idx
+            return None, None
+
+        change_row_values, change_row_index = _find_change_row(data)
+        if change_row_values is None:
+            raise Exception('Could not locate a valid "change" header row. Ensure the spreadsheet includes a row starting with "change".')
+        if change_row_index != CHANGE_ROW_INDEX:
+            logger.info('Detected change row at index %s (expected %s).', change_row_index, CHANGE_ROW_INDEX)
+
         column_changeables = self.column_changeables = {}
-        for _a, _b in zip(column_names, data[CHANGE_ROW_INDEX]):
+        for _a, _b in zip(column_names, change_row_values):
             if _a == DATE:
                 column_changeables[_a] = NA_CHANGE
                 continue
@@ -608,7 +686,7 @@ class Optimizer:
 
         # Load data rows and convert to ARFF format.
         row_errors = {} # {row_count: error}
-        data = data[DATA_ROW_INDEX:]
+        data = data[change_row_index + 1:]
         arff = ArffFile(relation=self.relation)
         arff.class_attr_name = CLASS_ATTR_NAME
         arff.relation = self.relation # 'optimizer-training'
